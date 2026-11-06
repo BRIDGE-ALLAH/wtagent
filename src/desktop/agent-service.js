@@ -44,6 +44,7 @@ export class DesktopAgentService {
     this.limits = resolveLimits();
     this.pendingApprovals = new Map();
     this.providerSelectionResolver = null;
+    this.providerSelectionDone = false;
     this.running = false;
     this.closed = false;
   }
@@ -200,8 +201,10 @@ export class DesktopAgentService {
       session: this.session,
       limits: this.limits,
       postAuthSetup: async ({ adapter }) => {
+        if (this.providerSelectionDone) return;
         await adapter.restoreWindow?.();
         await this.#waitForProviderSelection();
+        this.providerSelectionDone = true;
       },
       approval: (request) => this.#requestApproval(request),
       onEvent: (event) => this.#forwardRuntimeEvent(event),

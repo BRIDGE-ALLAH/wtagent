@@ -294,6 +294,10 @@ async function chooseWorkspace() {
   try {
     const result = await api.pickWorkspace();
     if (!result) return;
+    if (agentStarted && result.path !== workspace) {
+      alert("Sesi agent yang sedang berjalan terikat pada workspace saat ini. Tutup dan buka kembali WTAgent Studio untuk memulai sesi pada folder lain.");
+      return;
+    }
     await setWorkspace(result.path, result.name);
   } catch (error) {
     appendMessage("system", error.message, "error");
@@ -485,6 +489,12 @@ api.onAgentEvent((event) => {
 
 $("#open-folder").addEventListener("click", chooseWorkspace);
 $("#welcome-open").addEventListener("click", chooseWorkspace);
+$("#provider-select").addEventListener("change", () => {
+  const isGemini = $("#provider-select").value === "gemini";
+  $("#generation-select").disabled = agentStarted || !isGemini;
+  if (!isGemini) $("#generation-select").value = "agent";
+});
+$("#generation-select").disabled = $("#provider-select").value !== "gemini";
 $("#refresh-files").addEventListener("click", refreshFiles);
 $("#new-file").addEventListener("click", createFile);
 $("#start-agent").addEventListener("click", () => $("#agent-prompt").focus());

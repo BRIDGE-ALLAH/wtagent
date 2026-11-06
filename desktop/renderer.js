@@ -657,6 +657,17 @@ async function createFile() {
   }
 }
 
+function buildWorkflowInstruction(promptText) {
+  const mode = $("#agent-mode").value;
+  if (mode === "plan") {
+    return "WORKFLOW: PLAN ONLY\nInspect the project and relevant files, then produce a concise implementation plan with affected files, dependencies, risks, and verification steps. Do not edit, create, delete, or execute project files. Wait for the user's approval before implementation.\n\nUSER REQUEST:\n" + promptText;
+  }
+  if (mode === "verify") {
+    return "WORKFLOW: PLAN, IMPLEMENT, AND VERIFY\nFirst inspect the relevant project structure and state a concise plan. Then implement the requested change across all necessary files. Run the most relevant tests, type checks, lint/build commands available in this project, inspect the final diff, and report exactly what passed or failed. Do not claim tests passed unless you ran them. Preserve existing user changes and ask for approval for sensitive tool actions.\n\nUSER REQUEST:\n" + promptText;
+  }
+  return promptText;
+}
+
 async function sendAgent() {
   const promptText = $("#agent-prompt").value.trim();
   if (!promptText || agentBusy) return;
@@ -666,6 +677,7 @@ async function sendAgent() {
   }
   $("#agent-prompt").value = "";
   appendMessage("user", promptText);
+  const instruction = buildWorkflowInstruction(promptText);
   setAgentStatus("Memproses tugas…", "busy");
   $("#provider-select").disabled = true;
   $("#generation-select").disabled = true;
@@ -675,10 +687,10 @@ async function sendAgent() {
         projectRoot: workspace,
         model: $("#provider-select").value,
         generationType: $("#provider-select").value === "gemini" ? $("#generation-select").value : "agent",
-        instruction: promptText
+        instruction
       });
     } else {
-      await api.sendAgent(promptText);
+      await api.sendAgent(instruction);
     }
     if (!agentBusy) setAgentStatus("Session siap");
   } catch (error) {

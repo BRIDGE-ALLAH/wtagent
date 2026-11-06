@@ -10,6 +10,12 @@ let savedContent = "";
 let agentStarted = false;
 let agentBusy = false;
 let currentTerminalJob = null;
+let currentSessionId = "";
+let chatHistory = [];
+let restoringChat = false;
+let terminalHistory = [];
+let terminalHistoryIndex = -1;
+let gitState = { isRepo: false, branch: "", branches: [], changes: [] };
 const monacoReadyPromise = window.monaco
   ? Promise.resolve()
   : new Promise((resolve) => window.addEventListener("monaco-ready", resolve, { once: true }));
@@ -28,6 +34,74 @@ function setAgentStatus(text, mode = "ready") {
   $("#send-agent").disabled = agentBusy;
 }
 
+function persistChat() {
+  if (!currentSessionId || restoringChat) return;
+  try {
+    localStorage.setItem("wtagent.chat." + currentSessionId, JSON.stringify(chatHistory.slice(-160)));
+  } catch {}
+}
+
+function recordChat(item) {
+  if (restoringChat) return;
+  chatHistory.push(item);
+  if (chatHistory.length > 160) chatHistory = chatHistory.slice(-160);
+  persistChat();
+}
+
+function restoreChat(sessionId, fallbackTask = "") {
+  restoringChat = true;
+  currentSessionId = sessionId;
+  chatHistory = [];
+  $("#chat-feed").replaceChildren();
+  try {
+    const stored = JSON.parse(localStorage.getItem("wtagent.chat." + sessionId) || "[]");
+    if (Array.isArray(stored)) {
+      chatHistory = stored.slice(-160);
+      for (const item of chatHistory) {
+        if (item.type === "message") renderStoredMessage(item);
+        else if (item.type === "activity") renderStoredActivity(item);
+      }
+    }
+  } catch {
+    chatHistory = [];
+  }
+  restoringChat = false;
+  if (!chatHistory.length) {
+    appendMessage("system", fallbackTask ? "Melanjutkan: " + fallbackTask : "Sesi dipulihkan. Riwayat tampilan lokal sebelumnya tidak tersedia, tetapi konteks percakapan tetap berada di akun provider.");
+  }
+}
+
+function renderStoredMessage(item) {
+  const intro = $(".agent-intro");
+  if (intro) intro.remove();
+  const node = document.createElement("div");
+  node.className = "message " + item.role + (item.kind ? " " + item.kind : "");
+  const label = document.createElement("div");
+  label.className = "message-label";
+  label.textContent = item.role === "user" ? "You" : item.role === "assistant" ? "WTAgent" : "System";
+  const body = document.createElement("div");
+  body.className = "message-body";
+  body.textContent = String(item.text ?? "");
+  node.append(label, body);
+  $("#chat-feed").append(node);
+}
+
+function renderStoredActivity(item) {
+  const card = document.createElement("div");
+  card.className = "activity-card";
+  const heading = document.createElement("div");
+  heading.className = "activity-title";
+  heading.textContent = "◈ " + item.title;
+  card.append(heading);
+  if (item.detail) {
+    const content = document.createElement("div");
+    content.className = "activity-detail";
+    content.textContent = item.detail;
+    card.append(content);
+  }
+  $("#chat-feed").append(card);
+}
+
 function appendMessage(role, text, kind = "") {
   const intro = $(".agent-intro");
   if (intro) intro.remove();
@@ -42,6 +116,7 @@ function appendMessage(role, text, kind = "") {
   item.append(label, body);
   $("#chat-feed").append(item);
   $("#chat-feed").scrollTop = $("#chat-feed").scrollHeight;
+  recordChat({ type: "message", role, text: String(text ?? ""), kind });
   return item;
 }
 
@@ -61,6 +136,7 @@ function appendActivity(title, detail = "") {
   $("#chat-feed").append(card);
   while ($("#chat-feed").children.length > 80) $("#chat-feed").firstElementChild.remove();
   $("#chat-feed").scrollTop = $("#chat-feed").scrollHeight;
+  recordChat({ type: "activity", title, detail: typeof detail === "string" ? detail : JSON.stringify(detail, null, 2) });
   return card;
 }
 

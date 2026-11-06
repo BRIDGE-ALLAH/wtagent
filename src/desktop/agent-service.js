@@ -45,6 +45,7 @@ export class DesktopAgentService {
     this.pendingApprovals = new Map();
     this.providerSelectionResolver = null;
     this.providerSelectionDone = false;
+    this.workflowMode = "agent";
     this.running = false;
     this.closed = false;
   }
@@ -76,7 +77,7 @@ export class DesktopAgentService {
     });
   }
 
-  async start({ projectRoot, model = "chatgpt", instruction, generationType = "agent" }) {
+  async start({ projectRoot, model = "chatgpt", instruction, generationType = "agent", workflowMode = "agent" }) {
     if (this.session) throw new Error("An agent session is already active.");
     assertNativeRuntimeSupported();
 
@@ -90,6 +91,7 @@ export class DesktopAgentService {
     await ensureDirectory(sessionsDir);
 
     this.provider = provider;
+    this.workflowMode = ["plan", "verify"].includes(workflowMode) ? workflowMode : "agent";
     this.session = await AgentSession.create({
       sessionsDir,
       task: String(instruction ?? "").trim(),
@@ -98,6 +100,7 @@ export class DesktopAgentService {
       mode: null,
       generationType: resolvedType,
     });
+    await this.session.update({ desktopWorkflowMode: this.workflowMode });
     this.#initializeRuntimeParts(appDataDir, resolvedType);
     this.#emit("desktop.session_started", {
       sessionId: this.session.sessionId,
@@ -135,10 +138,11 @@ export class DesktopAgentService {
       updatedAt: state.updatedAt || state.createdAt || null,
       lastError: state.lastError || null,
       recoveryRequired: Boolean(state.pendingOutbound || state.pendingAssistantTurn),
+      workflowMode: state.desktopWorkflowMode || "agent",
     }));
   }
 
-  async resume({ sessionId, instruction = "" }) {
+  async resume({ sessionId, instruction = "", workflowMode = null }) {
     if (this.session) throw new Error("Tutup sesi aktif sebelum membuka sesi lain.");
     assertNativeRuntimeSupported();
     const appDataDir = path.resolve(getAppDataDir());
@@ -152,6 +156,10 @@ export class DesktopAgentService {
     const generationType = validateGenerationType(session.state.generationType || "agent", provider.id);
     this.provider = provider;
     this.session = session;
+    this.workflowMode = ["plan", "verify"].includes(workflowMode)
+      ? workflowMode
+      : (["plan", "verify"].includes(session.state.desktopWorkflowMode) ? session.state.desktopWorkflowMode : "agent");
+    await session.update({ desktopWorkflowMode: this.workflowMode });
     if (["initializing", "running", "waiting_model", "auth_required"].includes(session.state.phase)) {
       await session.update({ phase: "interrupted" });
     }
@@ -252,15 +260,32 @@ export class DesktopAgentService {
 
   async #buildRuntime() {
     await this.approvalStore.ensureLoaded();
+    const registry = createDefaultToolRegistry({
+      processManager: this.processManager,
+      limits: this.limits,
+    });
+    const basePolicy = new PolicyEngine({ store: this.approvalStore });
+    const policy = {
+      evaluate: async (toolCall, context) => {
+        if (this.workflowMode === "plan") {
+          const definition = registry.list().find((tool) => tool.name === toolCall.name);
+          if (definition && definition.risk !== "read") {
+            return {
+              action: "deny",
+              reasons: ["Plan-only mode: tool " + toolCall.name + " is disabled because it may change files or execute commands."],
+              grants: { allowOutside: false },
+            };
+          }
+        }
+        return await basePolicy.evaluate(toolCall, context);
+      },
+    };
     return new AgentRuntime({
       adapter: this.adapter,
       nativeImageReceiver: this.nativeImageReceiver,
       nativeMusicReceiver: this.nativeMusicReceiver,
-      registry: createDefaultToolRegistry({
-        processManager: this.processManager,
-        limits: this.limits,
-      }),
-      policy: new PolicyEngine({ store: this.approvalStore }),
+      registry,
+      policy,
       session: this.session,
       limits: this.limits,
       postAuthSetup: async ({ adapter }) => {
@@ -309,11 +334,13 @@ export class DesktopAgentService {
     }
   }
 
-  async send(instruction) {
+  async send(instruction, workflowMode = "agent") {
     if (!this.session) throw new Error("Mulai agent terlebih dahulu.");
     if (this.running) throw new Error("Agent masih memproses tugas sebelumnya.");
     const text = String(instruction ?? "").trim();
     if (!text) throw new Error("Instruksi tidak boleh kosong.");
+    this.workflowMode = ["plan", "verify"].includes(workflowMode) ? workflowMode : "agent";
+    await this.session.update({ desktopWorkflowMode: this.workflowMode });
     const { files, missing } = await extractAtMentions(text, this.session.state.projectRoot);
     if (missing.length) {
       this.#emit("desktop.notice", {

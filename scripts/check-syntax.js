@@ -8,6 +8,9 @@ async function collectJavaScriptFiles(directory) {
   for (const entry of entries) {
     const fullPath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
+      if (["node_modules", "dist", ".git"].includes(entry.name)) {
+        continue;
+      }
       files.push(...await collectJavaScriptFiles(fullPath));
     } else if (entry.isFile() && [".js", ".mjs", ".cjs"].includes(path.extname(entry.name))) {
       files.push(fullPath);

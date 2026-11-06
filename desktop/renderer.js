@@ -10,6 +10,9 @@ let savedContent = "";
 let agentStarted = false;
 let agentBusy = false;
 let currentTerminalJob = null;
+const monacoReadyPromise = window.monaco
+  ? Promise.resolve()
+  : new Promise((resolve) => window.addEventListener("monaco-ready", resolve, { once: true }));
 
 function setSaveStatus(text) {
   $("#save-indicator").textContent = text;
@@ -228,6 +231,7 @@ async function refreshFiles() {
 
 async function openFile(filePath) {
   if (!workspace) return;
+  await monacoReadyPromise;
   if (editor && activeFile && editor.getValue() !== savedContent) {
     const shouldSave = confirm("Ada perubahan yang belum disimpan. Simpan sekarang?");
     if (shouldSave) {
@@ -254,6 +258,21 @@ async function openFile(filePath) {
     editor.focus();
   } catch (error) {
     appendMessage("system", error.message, "error");
+  }
+}
+
+async function reloadActiveFileIfClean() {
+  if (!editor || !activeFile || !workspace || editor.getValue() !== savedContent) return;
+  try {
+    const result = await api.readFile(workspace, activeFile);
+    if (result.content !== savedContent) {
+      savedContent = result.content;
+      editor.setValue(result.content);
+      setSaveStatus("Updated from workspace");
+    }
+  } catch {
+    // The agent may have removed or renamed the open file; leave the editor
+    // content intact so the user can copy it elsewhere if needed.
   }
 }
 
@@ -402,6 +421,7 @@ api.onAgentEvent((event) => {
     case "desktop.turn_finished":
       setAgentStatus("Session siap");
       refreshFiles();
+      reloadActiveFileIfClean();
       break;
     case "browser.started":
       setAgentStatus("Menghubungkan browser…", "busy");
@@ -441,6 +461,7 @@ api.onAgentEvent((event) => {
     case "tool.result_sent":
       appendActivity("Hasil tool dikembalikan ke AI", payload.name || "");
       refreshFiles();
+      reloadActiveFileIfClean();
       break;
     case "tool.invalid":
     case "tool.conflict":

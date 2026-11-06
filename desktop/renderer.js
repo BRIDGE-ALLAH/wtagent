@@ -345,6 +345,7 @@ async function startNewSession() {
     agentStarted = false;
     $("#provider-select").disabled = false;
     $("#generation-select").disabled = $("#provider-select").value !== "gemini";
+    $("#agent-mode").disabled = false;
     $("#chat-feed").replaceChildren();
     appendMessage("system", "Sesi baru siap. Riwayat sesi sebelumnya tetap tersimpan dan dapat dibuka dari tombol Sesi.");
     setAgentStatus(workspace ? "Workspace siap · pilih tugas" : "Ready · pilih workspace");
@@ -862,6 +863,20 @@ $("#provider-select").addEventListener("change", () => {
   const isGemini = $("#provider-select").value === "gemini";
   $("#generation-select").disabled = agentStarted || !isGemini;
   if (!isGemini) $("#generation-select").value = "agent";
+  const preferences = getProviderPreferences();
+  preferences.defaultProvider = $("#provider-select").value;
+  saveProviderPreferences(preferences);
+});
+$("#generation-select").addEventListener("change", () => {
+  const preferences = getProviderPreferences();
+  preferences.providers[$("#provider-select").value] = {
+    ...(preferences.providers[$("#provider-select").value] || {}),
+    generationType: $("#generation-select").value
+  };
+  saveProviderPreferences(preferences);
+});
+$("#agent-mode").addEventListener("change", () => {
+  localStorage.setItem("wtagent.agent-mode", $("#agent-mode").value);
 });
 $("#generation-select").disabled = $("#provider-select").value !== "gemini";
 $("#refresh-files").addEventListener("click", refreshFiles);
@@ -889,10 +904,90 @@ $("#terminal-form").addEventListener("submit", (event) => {
   runTerminalCommand($("#terminal-command").value.trim());
 });
 $("#terminal-cancel").addEventListener("click", async () => {
-  if (currentTerminalJob) await api.cancelCommand(currentTerminalJob);
+  if (!currentTerminalJob) return;
+  $("#terminal-cancel").disabled = true;
+  await api.stopTerminal(currentTerminalJob);
+});
+$("#terminal-command").addEventListener("keydown", (event) => {
+  if (event.key === "ArrowUp" && terminalHistory.length) {
+    event.preventDefault();
+    terminalHistoryIndex = Math.max(0, terminalHistoryIndex - 1);
+    $("#terminal-command").value = terminalHistory[terminalHistoryIndex] || "";
+  } else if (event.key === "ArrowDown" && terminalHistory.length) {
+    event.preventDefault();
+    terminalHistoryIndex = Math.min(terminalHistory.length, terminalHistoryIndex + 1);
+    $("#terminal-command").value = terminalHistory[terminalHistoryIndex] || "";
+  }
 });
 $("#clear-terminal").addEventListener("click", () => $("#terminal-output").replaceChildren());
 $("#hide-terminal").addEventListener("click", () => $("#terminal-panel").classList.add("hidden"));
+$("#explorer-tab").addEventListener("click", () => showSidebarView("explorer"));
+$("#source-control-tab").addEventListener("click", () => showSidebarView("git"));
+$("#git-refresh").addEventListener("click", refreshGitStatus);
+$("#git-stage-all").addEventListener("click", async () => {
+  try {
+    await api.gitStageAll(workspace);
+    await refreshGitStatus();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+$("#git-branch-select").addEventListener("change", async () => {
+  const branch = $("#git-branch-select").value;
+  if (!branch || branch === gitState.branch) return;
+  try {
+    await api.gitCheckout(workspace, branch, false);
+    await refreshGitStatus();
+  } catch (error) {
+    alert("Tidak bisa berpindah branch: " + error.message);
+    await refreshGitStatus();
+  }
+});
+$("#git-new-branch").addEventListener("click", async () => {
+  const branch = prompt("Nama branch baru:");
+  if (!branch) return;
+  try {
+    await api.gitCheckout(workspace, branch, true);
+    await refreshGitStatus();
+  } catch (error) {
+    alert("Tidak bisa membuat branch: " + error.message);
+  }
+});
+$("#git-commit-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const message = $("#git-commit-message").value.trim();
+  if (!message) return alert("Isi pesan commit.");
+  try {
+    await api.gitCommit(workspace, message);
+    $("#git-commit-message").value = "";
+    await refreshGitStatus();
+    appendActivity("Git commit dibuat", message);
+  } catch (error) {
+    alert("Commit gagal: " + error.message);
+  }
+});
+$("#diff-close").addEventListener("click", () => {
+  $("#diff-view").classList.add("hidden");
+  if (editor && activeFile) $("#editor-host").style.display = "block";
+});
+$("#sessions-open").addEventListener("click", openSessionsManager);
+$("#sessions-close").addEventListener("click", () => $("#sessions-modal").classList.add("hidden"));
+$("#sessions-modal").addEventListener("click", (event) => {
+  if (event.target === $("#sessions-modal")) $("#sessions-modal").classList.add("hidden");
+});
+$("#models-open").addEventListener("click", openModelsManager);
+$("#models-close").addEventListener("click", () => $("#models-modal").classList.add("hidden"));
+$("#models-modal").addEventListener("click", (event) => {
+  if (event.target === $("#models-modal")) $("#models-modal").classList.add("hidden");
+});
+$("#models-default-provider").addEventListener("change", () => {
+  const preferences = getProviderPreferences();
+  preferences.defaultProvider = $("#models-default-provider").value;
+  saveProviderPreferences(preferences);
+  $("#provider-select").value = preferences.defaultProvider;
+  $("#provider-select").dispatchEvent(new Event("change"));
+});
+$("#new-session").addEventListener("click", startNewSession);
 document.querySelectorAll(".suggestion").forEach((button) => {
   button.addEventListener("click", () => {
     $("#agent-prompt").value = button.dataset.prompt || "";
@@ -908,6 +1003,11 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     $("#terminal-panel").classList.toggle("hidden");
   }
+  if (event.key === "Escape") {
+    $("#sessions-modal").classList.add("hidden");
+    $("#models-modal").classList.add("hidden");
+    $("#diff-view").classList.add("hidden");
+  }
 });
 
 window.addEventListener("monaco-ready", () => {
@@ -915,6 +1015,12 @@ window.addEventListener("monaco-ready", () => {
 });
 
 (async function boot() {
+  const preferences = getProviderPreferences();
+  if ([...$("#provider-select").options].some((option) => option.value === preferences.defaultProvider)) {
+    $("#provider-select").value = preferences.defaultProvider;
+  }
+  $("#agent-mode").value = localStorage.getItem("wtagent.agent-mode") || "agent";
+  $("#generation-select").disabled = $("#provider-select").value !== "gemini";
   if (workspace) {
     try {
       await setWorkspace(workspace);
@@ -923,4 +1029,5 @@ window.addEventListener("monaco-ready", () => {
       workspace = "";
     }
   }
+  await loadSessions();
 })();

@@ -899,7 +899,9 @@ $("#cancel-agent").addEventListener("click", async () => {
 });
 $("#clear-chat").addEventListener("click", () => {
   $("#chat-feed").replaceChildren();
-  appendActivity("Tampilan chat dibersihkan", "Riwayat agent tetap tersimpan di sesi WTAgent.");
+  chatHistory = [];
+  persistChat();
+  appendActivity("Tampilan chat dibersihkan", "Riwayat provider tetap tersimpan di sesi WTAgent.");
 });
 $("#terminal-form").addEventListener("submit", (event) => {
   event.preventDefault();

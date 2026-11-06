@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:;">
+  <title>WTAgent Studio</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/monaco/vs/loader.js"></script>
+  <script>
+    window.MonacoEnvironment = {
+      getWorkerUrl: function () {
+        const source = "self.MonacoEnvironment = { baseUrl: '/monaco/' }; importScripts('/monaco/vs/base/worker/workerMain.js');";
+        return "data:text/javascript;charset=utf-8," + encodeURIComponent(source);
+      }
+    };
+    require.config({ paths: { vs: "/monaco/vs" } });
+    require(["vs/editor/editor.main"], function () {
+      window.dispatchEvent(new Event("monaco-ready"));
+    });
+  </script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">W</div>
+        <span>WTAgent <b>Studio</b></span>
+      </div>
+      <div class="workspace-meta">
+        <span class="crumb-icon">⌘</span>
+        <span id="workspace-name">Belum ada folder dibuka</span>
+      </div>
+      <div class="top-actions">
+        <select id="provider-select" class="select-control" aria-label="AI Provider">
+          <option value="chatgpt">ChatGPT</option>
+          <option value="claude">Claude</option>
+          <option value="gemini">Gemini</option>
+          <option value="deepseek">DeepSeek</option>
+          <option value="grok">Grok</option>
+          <option value="kimi">Kimi</option>
+          <option value="glm">GLM</option>
+        </select>
+        <select id="generation-select" class="select-control compact" aria-label="Jenis tugas">
+          <option value="agent">Agent</option>
+          <option value="music">Music</option>
+        </select>
+        <button id="open-folder" class="button secondary">Buka Folder</button>
+        <button id="start-agent" class="button primary"><span class="spark">✦</span> Start Agent</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="sidebar">
+        <div class="side-section-head">
+          <span>EXPLORER</span>
+          <div class="icon-actions">
+            <button id="new-file" class="icon-button" title="File baru">＋</button>
+            <button id="refresh-files" class="icon-button" title="Refresh">↻</button>
+          </div>
+        </div>
+        <div class="project-label">
+          <span class="chevron">⌄</span>
+          <span id="project-label">PROJECT</span>
+        </div>
+        <div id="file-tree" class="file-tree">
+          <div class="empty-tree">Buka folder untuk mulai bekerja.</div>
+        </div>
+        <div class="sidebar-footer">
+          <div class="footer-item"><span class="footer-icon">⌕</span> Search <span class="shortcut">Ctrl + Shift + F</span></div>
+          <div class="footer-item"><span class="footer-icon">⑂</span> Source Control</div>
+        </div>
+      </aside>
+
+      <main class="editor-column">
+        <div class="editor-tabs">
+          <div id="active-tab" class="editor-tab empty-tab"><span class="file-dot">●</span> Welcome</div>
+          <div class="tab-spacer"></div>
+          <span id="save-indicator" class="save-indicator">Ready</span>
+        </div>
+        <div id="editor" class="editor-surface">
+          <div class="welcome">
+            <div class="welcome-logo">W</div>
+            <h1>WTAgent Studio</h1>
+            <p>Workspace AI coding agent berbasis akun web Anda.</p>
+            <div class="welcome-actions">
+              <button id="welcome-open" class="button primary">Buka Folder Proyek</button>
+            </div>
+            <div class="welcome-hint">Pilih folder, jalankan agent, lalu minta AI membaca, mengubah, dan menguji kode.</div>
+          </div>
+        </div>
+        <section id="terminal-panel" class="terminal-panel">
+          <div class="terminal-header">
+            <div class="terminal-tabs">
+              <button class="terminal-tab active">TERMINAL</button>
+              <button id="clear-terminal" class="terminal-tab">CLEAR</button>
+            </div>
+            <div class="terminal-tools">
+              <span id="terminal-status">Command runner</span>
+              <button id="hide-terminal" class="icon-button" title="Tutup terminal">×</button>
+            </div>
+          </div>
+          <div id="terminal-output" class="terminal-output"><div class="terminal-welcome">Jalankan perintah proyek dari sini, misalnya <code>npm test</code> atau <code>npm run dev</code>.</div></div>
+          <form id="terminal-form" class="terminal-input-row">
+            <span class="terminal-prompt">›</span>
+            <input id="terminal-command" autocomplete="off" spellcheck="false" placeholder="Ketik perintah lalu Enter…" />
+            <button id="terminal-run" class="button tiny secondary" type="submit">Run</button>
+            <button id="terminal-cancel" class="button tiny ghost" type="button" disabled>Stop</button>
+          </form>
+        </section>
+      </main>
+
+      <aside class="agent-panel">
+        <div class="agent-header">
+          <div>
+            <div class="agent-title"><span class="spark">✦</span> AI Agent</div>
+            <div id="agent-status" class="agent-status"><span class="status-dot"></span> Ready · pilih workspace</div>
+          </div>
+          <div class="agent-header-actions">
+            <button id="cancel-agent" class="icon-button" title="Batalkan tugas" disabled>■</button>
+            <button id="clear-chat" class="icon-button" title="Bersihkan tampilan chat">⌫</button>
+          </div>
+        </div>
+        <div id="chat-feed" class="chat-feed">
+          <div class="agent-intro">
+            <div class="intro-orb">✦</div>
+            <h2>Halo, siap ngoding?</h2>
+            <p>Jelaskan fitur, bug, atau refactor yang ingin dikerjakan. Agent akan memeriksa workspace dan menjalankan langkah yang diperlukan.</p>
+            <div class="suggestion-list">
+              <button class="suggestion" data-prompt="Analisis struktur proyek ini dan jelaskan bagian-bagian pentingnya.">⌕ <span>Jelaskan struktur proyek</span></button>
+              <button class="suggestion" data-prompt="Periksa proyek ini, temukan bug yang paling penting, lalu perbaiki dengan aman.">⌁ <span>Temukan dan perbaiki bug</span></button>
+              <button class="suggestion" data-prompt="Buat ringkasan cara menjalankan dan menguji proyek ini. Jangan ubah file dulu.">▷ <span>Siapkan proyek untuk dijalankan</span></button>
+            </div>
+          </div>
+        </div>
+        <form id="agent-form" class="agent-composer">
+          <textarea id="agent-prompt" rows="3" placeholder="Tanya atau beri tugas ke WTAgent… (Enter untuk kirim, Shift+Enter baris baru)"></textarea>
+          <div class="composer-bottom">
+            <div class="composer-hints"><span class="composer-chip">⌘ Workspace</span><span class="composer-chip">@ file</span></div>
+            <button id="send-agent" class="send-button" type="submit" title="Kirim tugas">↑</button>
+          </div>
+        </form>
+        <div class="agent-footnote"><span class="shield">◇</span> Aksi sensitif meminta persetujuan Anda.</div>
+      </aside>
+    </div>
+    <footer class="statusbar">
+      <div><span class="status-branch">⑂</span> <span id="status-project">No workspace</span></div>
+      <div class="status-right"><span id="status-editor">No file open</span><span>WTAgent runtime</span><span>UTF-8</span></div>
+    </footer>
+  </div>
+  <script src="/renderer.js"></script>
+</body>
+</html>

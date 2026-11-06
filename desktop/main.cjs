@@ -262,9 +262,9 @@ function registerIpc() {
     agentService = null;
     return true;
   });
-  ipcMain.handle("agent:send", async (_event, instruction) => {
+  ipcMain.handle("agent:send", async (_event, { instruction, workflowMode = "agent" }) => {
     if (!agentService) throw new Error("Agent belum dimulai.");
-    return { ok: true, result: await agentService.send(instruction) };
+    return { ok: true, result: await agentService.send(instruction, workflowMode) };
   });
   ipcMain.handle("agent:approval", async (_event, args) => agentService?.respondApproval(args.requestId, args.choice) ?? false);
   ipcMain.handle("agent:continue-provider", async () => {

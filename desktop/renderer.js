@@ -612,6 +612,7 @@ async function saveFile() {
     $("#active-tab").textContent = activeFile.split("/").pop();
     setSaveStatus("Saved");
     await refreshFiles();
+    await refreshGitStatus();
   } catch (error) {
     appendMessage("system", "Gagal menyimpan: " + error.message, "error");
     setSaveStatus("Save failed");
@@ -634,6 +635,10 @@ async function chooseWorkspace() {
 
 async function setWorkspace(workspacePath, name = "") {
   const result = await api.validateWorkspace(workspacePath);
+  if (workspace && workspace !== result.path && currentTerminalJob) {
+    await api.stopTerminal(currentTerminalJob).catch(() => {});
+    finishTerminal();
+  }
   workspace = result.path;
   localStorage.setItem("wtagent.workspace", workspace);
   const title = name || result.name;
@@ -641,6 +646,7 @@ async function setWorkspace(workspacePath, name = "") {
   $("#project-label").textContent = title.toUpperCase();
   $("#status-project").textContent = title;
   await refreshFiles();
+  await refreshGitStatus();
   setAgentStatus(agentStarted ? "Session aktif · " + $("#provider-select").value : "Workspace siap · pilih tugas");
 }
 
@@ -766,10 +772,18 @@ api.onAgentEvent((event) => {
   const payload = event.payload || {};
   switch (event.type) {
     case "desktop.session_started":
+      if (payload.resumed && currentSessionId !== payload.sessionId) {
+        restoreChat(payload.sessionId, payload.task || "");
+      }
+      currentSessionId = payload.sessionId || currentSessionId;
       agentStarted = true;
       $("#provider-select").disabled = true;
       $("#generation-select").disabled = true;
-      appendActivity("Session dimulai", payload.sessionId);
+      $("#agent-mode").disabled = true;
+      if (payload.provider) $("#provider-select").value = payload.provider;
+      appendActivity(payload.resumed ? "Sesi dipulihkan" : "Session dimulai", payload.sessionId);
+      if (payload.recoveryRequired) appendMessage("system", "Sesi memiliki operasi browser yang statusnya belum pasti. WTAgent akan melakukan bare recovery terlebih dahulu; jangan mengirim ulang instruksi yang sama sebelum proses ini selesai.", "notice");
+      persistChat();
       break;
     case "desktop.turn_started":
       setAgentStatus("Memproses tugas…", "busy");
@@ -778,6 +792,7 @@ api.onAgentEvent((event) => {
     case "desktop.turn_finished":
       setAgentStatus("Session siap");
       refreshFiles();
+      refreshGitStatus();
       reloadActiveFileIfClean();
       break;
     case "browser.started":
@@ -818,6 +833,7 @@ api.onAgentEvent((event) => {
     case "tool.result_sent":
       appendActivity("Hasil tool dikembalikan ke AI", payload.name || "");
       refreshFiles();
+      refreshGitStatus();
       reloadActiveFileIfClean();
       break;
     case "tool.invalid":

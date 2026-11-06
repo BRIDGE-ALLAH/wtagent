@@ -38,17 +38,21 @@ Build output is written to `desktop/dist/`. macOS distribution signing/notarizat
 
 ## Current desktop features
 
-- Workspace folder picker and a project file explorer
-- Monaco editor for opening, editing, and saving text files (`Ctrl/Cmd+S`)
-- AI chat wired to WTAgent's existing `AgentRuntime`
-- Provider browser handoff and login flow
-- Per-action approval controls: allow once, always allow a tool, allow all tools, or deny
-- Workspace-scoped file access from the editor
-- Project command runner at the bottom (`Ctrl/Cmd+J` toggles the panel)
+- Workspace folder picker, explorer, Monaco editor, file save, and nested file creation (`Ctrl/Cmd+S`)
+- Persistent shell process for consecutive commands and long-running development servers (`Ctrl/Cmd+J` toggles the panel)
+- AI chat wired to WTAgent's existing `AgentRuntime`, with per-action approval controls
+- Workflow modes: **Agent**, **Plan only**, and **Build & verify**. Plan only denies non-read-only tools in the runtime policy; Build & verify asks the model to inspect, plan, implement, run relevant checks, and review the diff.
+- Git source control: current branch, changed-file list, staged/unstaged diff, stage/unstage, create/switch branch, and local commit
+- Saved WTAgent session list, session resume/recovery, and locally persisted chat activity display
+- Provider manager for all supported web providers, profile-folder status/open, default provider, and a local note for a preferred model
 
-## Notes
+## Notes and current limitations
 
-- Terminal commands are started as one-shot shell processes; a persistent interactive PTY is not part of this first version.
+- The shell process is persistent and accepts additional commands while another process runs, but it is not backed by a native PTY. Full-screen terminal programs, raw keyboard modes, and rich terminal emulation (for example `vim` or `top`) are not supported reliably. Stop ends the shell process.
+- The Git panel performs local operations only. It does not push, fetch, or publish to a remote.
+- Provider profile status means that a local profile folder exists; it does not prove that the provider is signed in. WTAgent still asks you to complete login in its browser when required.
+- The preferred-model field is a note for your own reference. WTAgent does not automatically select model names on provider websites; choose the actual model in the provider browser.
+- Plan only restricts WTAgent tools whose declared risk is not read-only. It cannot prevent a user from changing files manually in the editor or terminal outside the agent.
 - The editor currently opens text files up to 2 MB.
-- The app saves WTAgent session state and provider browser profiles under Electron's user-data directory.
-- This desktop integration is an initial implementation. Exercise it with a disposable project before relying on it for important work, and review agent approval prompts before allowing file or command operations.
+- WTAgent session state, provider browser profiles, and desktop UI preferences are stored locally under Electron's user-data directory. A resumed session may need the provider browser to reconnect or authenticate.
+- Exercise the app with a disposable project before relying on it for important work. Review approval prompts before allowing agent file or process operations.

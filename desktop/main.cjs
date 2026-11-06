@@ -85,6 +85,7 @@ function safeStaticPath(base, requestPath) {
 }
 
 async function startStaticServer() {
+  if (staticServer?.listening) return staticServer.address().port;
   const desktopRoot = __dirname;
   const monacoRoot = path.join(desktopRoot, "node_modules", "monaco-editor", "min");
   staticServer = http.createServer(async (req, res) => {

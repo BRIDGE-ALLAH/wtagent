@@ -212,3 +212,7 @@ button { cursor: pointer; }
   .top-actions { gap:5px; }
   .top-actions .button, .top-actions .select-control { padding-left:7px; padding-right:7px; font-size:10px; }
 }
+
+.git-change-row { padding:2px 4px; gap:4px; }
+.git-change-open { flex:1; min-width:0; min-height:28px; border:0; background:transparent; display:flex; align-items:center; gap:6px; padding:3px 4px; color:#c0c6d1; text-align:left; }
+.git-change-open:hover { color:#fff; }

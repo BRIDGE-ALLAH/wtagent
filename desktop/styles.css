@@ -146,3 +146,69 @@ button { cursor: pointer; }
 ::-webkit-scrollbar { width:9px; height:9px; }
 ::-webkit-scrollbar-thumb { background:#343a48; border:2px solid transparent; background-clip:padding-box; border-radius:10px; }
 ::-webkit-scrollbar-thumb:hover { background:#4c5364; border:2px solid transparent; background-clip:padding-box; }
+
+
+/* Multi-session workspace, source control, provider manager and persistent terminal. */
+.sidebar-tabs { height:36px; min-height:36px; display:flex; border-bottom:1px solid var(--line); background:#171a21; }
+.sidebar-tab { flex:1; border:0; border-bottom:2px solid transparent; background:transparent; color:#8791a2; font-size:9px; font-weight:750; letter-spacing:.7px; }
+.sidebar-tab.active { color:#ddd9ff; border-bottom-color:var(--accent); }
+.sidebar-view { flex:1; min-height:0; display:flex; flex-direction:column; }
+.git-panel { flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+.git-branch-row { display:flex; gap:5px; padding:9px 8px; border-bottom:1px solid var(--line); }
+.git-branch-row select { flex:1; min-width:0; }
+.git-section-title { height:35px; min-height:35px; display:flex; align-items:center; justify-content:space-between; padding:0 12px; color:#aeb5c2; font-size:10px; font-weight:750; letter-spacing:.7px; }
+.text-button { border:0; background:transparent; color:var(--accent-2); font-size:10px; padding:4px 5px; }
+.git-changes { flex:1; min-height:65px; overflow:auto; padding:4px 7px 10px; }
+.git-change-row { width:100%; min-height:31px; border:0; display:flex; align-items:center; gap:7px; padding:4px 6px; border-radius:5px; background:transparent; color:#c0c6d1; text-align:left; font-size:10px; }
+.git-change-row:hover { background:#252b36; }
+.git-change-path { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.git-change-status { width:22px; color:var(--yellow); font:10px ui-monospace,monospace; text-align:center; }
+.git-change-action { width:22px; height:22px; display:grid; place-items:center; border:1px solid #394151; border-radius:4px; background:#222733; color:#c7c0ff; font-size:13px; }
+.git-commit-form { padding:9px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:7px; }
+.git-commit-form textarea { resize:vertical; min-height:48px; max-height:100px; border:1px solid #353c4b; border-radius:6px; background:#1b2029; color:#e6e9ef; padding:8px; font-size:10px; outline:0; }
+.git-commit-form textarea:focus { border-color:var(--accent); }
+.git-commit-form button { width:100%; }
+.git-status-note { border-top:1px solid var(--line); padding:7px 10px; min-height:27px; color:#758094; font-size:9px; line-height:1.5; }
+.diff-view { position:absolute; inset:0; z-index:5; display:flex; flex-direction:column; background:#111318; }
+.diff-titlebar { display:flex; justify-content:space-between; align-items:center; min-height:38px; padding:0 13px; border-bottom:1px solid var(--line); color:#d5d9e3; font-size:12px; }
+.diff-view pre { flex:1; overflow:auto; margin:0; padding:14px 18px; white-space:pre; color:#c5cbd6; font:11px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace; }
+.terminal-panel { min-height:230px; height:230px; }
+.terminal-header .terminal-tools { gap:7px; }
+.terminal-input-row { min-height:36px; height:36px; }
+.terminal-input-row input { font-size:12px; }
+.terminal-output .command-line { color:#c5baff; }
+.terminal-output .error-line { color:#f09299; }
+.terminal-output .exit-line { color:#8290a3; }
+.terminal-output { user-select:text; }
+.modal { position:fixed; inset:0; z-index:30; background:#090b10c9; display:flex; align-items:center; justify-content:center; padding:28px; }
+.modal-card { width:min(700px, 88vw); max-height:min(760px, 86vh); display:flex; flex-direction:column; background:#191d26; border:1px solid #363d4c; border-radius:12px; box-shadow:0 22px 80px #0009; overflow:hidden; }
+.models-card { width:min(820px, 92vw); }
+.modal-heading { display:flex; align-items:center; justify-content:space-between; padding:17px 20px; border-bottom:1px solid var(--line); }
+.modal-heading h2 { margin:0 0 5px; font-size:16px; color:#e8eaf1; }
+.modal-heading p { margin:0; color:#8b95a7; font-size:11px; }
+.session-list { padding:9px; overflow:auto; display:flex; flex-direction:column; gap:6px; }
+.session-entry { display:flex; align-items:center; gap:12px; padding:11px 12px; border:1px solid #303747; border-radius:8px; background:#202530; text-align:left; color:#d9dce5; }
+.session-entry:hover { border-color:#7065c7; background:#282b3b; }
+.session-entry-main { flex:1; min-width:0; }
+.session-entry-title { font-size:12px; font-weight:650; margin-bottom:5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.session-entry-meta { color:#8792a4; font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
+.session-entry-state { color:#b9adff; font-size:9px; white-space:nowrap; }
+.models-note { margin:13px 17px 5px; padding:10px 12px; border:1px solid #34394a; border-radius:7px; background:#202431; color:#aeb6c6; font-size:10px; line-height:1.55; }
+.models-default-row { display:flex; align-items:center; justify-content:space-between; padding:10px 18px; border-bottom:1px solid var(--line); color:#b8c0cf; font-size:11px; }
+.models-default-row select { min-width:170px; }
+.provider-profile-list { padding:10px; overflow:auto; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.provider-profile-card { padding:11px; border:1px solid #303747; border-radius:8px; background:#202530; min-width:0; }
+.provider-profile-top { display:flex; justify-content:space-between; align-items:center; gap:7px; margin-bottom:7px; }
+.provider-profile-name { color:#e4e6ee; font-weight:650; font-size:12px; }
+.provider-profile-state { font-size:9px; color:var(--green); }
+.provider-profile-state.missing { color:#d5ad67; }
+.provider-profile-path { color:#7f8a9d; font-size:9px; overflow-wrap:anywhere; line-height:1.45; margin-bottom:8px; }
+.provider-profile-controls { display:flex; gap:6px; align-items:center; }
+.provider-model-note { flex:1; min-width:0; width:0; height:26px; padding:0 7px; background:#171b23; border:1px solid #374051; border-radius:5px; color:#cbd1df; font-size:10px; }
+.provider-profile-controls button { height:26px; padding:0 7px; border:1px solid #434b5e; border-radius:5px; background:#2a3040; color:#c9c1ff; font-size:9px; white-space:nowrap; }
+@media (max-width: 1300px) {
+  .workspace { grid-template-columns:215px minmax(380px,1fr) 350px; }
+  .topbar { gap:10px; padding:0 10px; }
+  .top-actions { gap:5px; }
+  .top-actions .button, .top-actions .select-control { padding-left:7px; padding-right:7px; font-size:10px; }
+}

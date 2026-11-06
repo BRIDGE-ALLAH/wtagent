@@ -140,6 +140,21 @@ wtagent "create hello.js, run it, and verify the output"
 
 Multiline paste and `↑` / `↓` input history are supported. Press `Ctrl+C` or `Ctrl+D` to exit.
 
+## Desktop IDE (preview)
+
+WTAgent also includes an Electron desktop workspace with a Monaco editor, file explorer, AI-agent chat, approval prompts, and a project command runner.
+
+See [desktop/README.md](./desktop/README.md) for setup and installer build instructions.
+
+```bash
+npm ci
+cd desktop
+npm install
+npm start
+```
+
+The desktop app reuses WTAgent's browser-backed providers and local agent runtime; it does not introduce a separate API-key requirement.
+
 ## 中文
 
 把 ChatGPT 网页版（含 Pro）变成 Codex。

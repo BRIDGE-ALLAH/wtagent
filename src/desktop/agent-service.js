@@ -119,6 +119,69 @@ export class DesktopAgentService {
     });
   }
 
+  async listSessions(limit = 40) {
+    const appDataDir = path.resolve(getAppDataDir());
+    const sessionsDir = getSessionsDir(appDataDir);
+    await ensureDirectory(sessionsDir);
+    const states = await AgentSession.list({ sessionsDir, limit });
+    return states.map((state) => ({
+      sessionId: state.sessionId,
+      task: state.task || "Sesi tanpa judul",
+      projectRoot: state.projectRoot,
+      provider: state.provider || "chatgpt",
+      generationType: state.generationType || "agent",
+      phase: state.phase || "idle",
+      createdAt: state.createdAt || null,
+      updatedAt: state.updatedAt || state.createdAt || null,
+      lastError: state.lastError || null,
+      recoveryRequired: Boolean(state.pendingOutbound || state.pendingAssistantTurn),
+    }));
+  }
+
+  async resume({ sessionId, instruction = "" }) {
+    if (this.session) throw new Error("Tutup sesi aktif sebelum membuka sesi lain.");
+    assertNativeRuntimeSupported();
+    const appDataDir = path.resolve(getAppDataDir());
+    const sessionsDir = getSessionsDir(appDataDir);
+    await ensureDirectory(sessionsDir);
+    const session = await AgentSession.load({ sessionsDir, sessionId: String(sessionId ?? "") });
+    const projectRoot = path.resolve(String(session.state.projectRoot ?? ""));
+    const projectStat = await fs.stat(projectRoot);
+    if (!projectStat.isDirectory()) throw new Error("Folder proyek sesi ini tidak lagi tersedia.");
+    const provider = resolveProvider(session.state.provider);
+    const generationType = validateGenerationType(session.state.generationType || "agent", provider.id);
+    this.provider = provider;
+    this.session = session;
+    if (["initializing", "running", "waiting_model", "auth_required"].includes(session.state.phase)) {
+      await session.update({ phase: "interrupted" });
+    }
+    this.#initializeRuntimeParts(appDataDir, generationType);
+    this.#emit("desktop.session_started", {
+      sessionId: session.sessionId,
+      projectRoot,
+      provider: provider.id,
+      resumed: true,
+      recoveryRequired: Boolean(session.state.pendingOutbound || session.state.pendingAssistantTurn),
+    });
+
+    const text = String(instruction ?? "").trim();
+    const attachmentResult = text
+      ? await extractAtMentions(text, projectRoot)
+      : { files: [], missing: [] };
+    if (attachmentResult.missing.length) {
+      this.#emit("desktop.notice", {
+        message: "Beberapa lampiran @path tidak ditemukan.",
+        details: attachmentResult.missing,
+      });
+    }
+    if (text) await session.appendInstruction(text, { files: attachmentResult.files });
+    return await this.#runTurn({
+      resume: true,
+      instruction: text,
+      files: attachmentResult.files,
+    });
+  }
+
   #initializeRuntimeParts(appDataDir, generationType) {
     this.processManager = new ProcessManager();
     this.approvalStore = new ApprovalStore({
@@ -273,6 +336,9 @@ export class DesktopAgentService {
     if (this.closed) return;
     this.closed = true;
     this.continueProviderSelection();
+    if (this.session && ["initializing", "running", "waiting_model", "auth_required"].includes(this.session.state.phase)) {
+      await this.session.update({ phase: "interrupted", lastError: this.session.state.lastError || "Desktop app closed." }).catch(() => {});
+    }
     for (const [requestId, pending] of this.pendingApprovals) {
       pending.resolve(false);
       this.pendingApprovals.delete(requestId);

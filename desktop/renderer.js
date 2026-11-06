@@ -343,7 +343,6 @@ async function sendAgent() {
   $("#generation-select").disabled = true;
   try {
     if (!agentStarted) {
-      agentStarted = true;
       await api.startAgent({
         projectRoot: workspace,
         model: $("#provider-select").value,
@@ -355,8 +354,9 @@ async function sendAgent() {
     }
     if (!agentBusy) setAgentStatus("Session siap");
   } catch (error) {
-    appendMessage("assistant", error.message, "error");
-    setAgentStatus("Terjadi kesalahan", "error");
+    // The service emits desktop.agent_error with the provider/runtime detail.
+    // Avoid showing the same exception twice when the IPC call also rejects.
+    if (!agentStarted) setAgentStatus("Gagal memulai agent", "error");
   } finally {
     $("#provider-select").disabled = agentStarted;
     $("#generation-select").disabled = agentStarted;
@@ -416,6 +416,9 @@ api.onAgentEvent((event) => {
   const payload = event.payload || {};
   switch (event.type) {
     case "desktop.session_started":
+      agentStarted = true;
+      $("#provider-select").disabled = true;
+      $("#generation-select").disabled = true;
       appendActivity("Session dimulai", payload.sessionId);
       break;
     case "desktop.turn_started":

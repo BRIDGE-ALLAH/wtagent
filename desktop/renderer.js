@@ -137,8 +137,8 @@ function initEditor() {
   if (editor || !window.monaco) return;
   const host = document.createElement("div");
   host.id = "editor-host";
-  $("#editor").replaceChildren(host);
-  host.style.display = "block";
+  host.style.display = "none";
+  $("#editor").append(host);
   editor = monaco.editor.create(host, {
     value: "",
     language: "plaintext",
@@ -160,7 +160,6 @@ function initEditor() {
     setSaveStatus(dirty ? "● Unsaved" : "Saved");
     $("#active-tab").textContent = (dirty ? "● " : "") + activeFile.split("/").pop();
   });
-  host.style.display = "block";
 }
 
 function renderFiles() {
@@ -236,6 +235,8 @@ async function openFile(filePath) {
   try {
     const result = await api.readFile(workspace, filePath);
     initEditor();
+    $(".welcome")?.remove();
+    $("#editor-host").style.display = "block";
     activeFile = filePath;
     savedContent = result.content;
     editor.setValue(result.content);
@@ -504,10 +505,8 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-window.addEventListener("monaco-ready", async () => {
+window.addEventListener("monaco-ready", () => {
   initEditor();
-  $("#editor").innerHTML = '<div class="welcome"><div class="welcome-logo">W</div><h1>WTAgent Studio</h1><p>Workspace AI coding agent berbasis akun web Anda.</p><div class="welcome-actions"><button id="welcome-open" class="button primary">Buka Folder Proyek</button></div><div class="welcome-hint">Pilih folder, jalankan agent, lalu minta AI membaca, mengubah, dan menguji kode.</div></div>';
-  $("#welcome-open").addEventListener("click", chooseWorkspace);
 });
 
 (async function boot() {

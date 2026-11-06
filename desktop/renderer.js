@@ -703,17 +703,23 @@ function writeTerminal(text, className = "") {
 
 async function runTerminalCommand(command) {
   if (!workspace) return alert("Buka folder proyek terlebih dahulu.");
-  if (currentTerminalJob) return;
+  const text = String(command ?? "");
+  if (!text.trim()) return;
   $("#terminal-panel").classList.remove("hidden");
   $("#terminal-command").value = "";
-  $("#terminal-command").disabled = true;
-  $("#terminal-run").disabled = true;
-  $("#terminal-cancel").disabled = false;
-  $("#terminal-status").textContent = "Running…";
-  writeTerminal("$ " + command, "command-line");
+  terminalHistory.push(text);
+  terminalHistoryIndex = terminalHistory.length;
+  writeTerminal((currentTerminalJob ? "" : "[terminal baru] ") + text, "command-line");
   try {
-    const job = await api.runCommand(workspace, command);
-    currentTerminalJob = job.id;
+    if (!currentTerminalJob) {
+      $("#terminal-status").textContent = "Starting shell…";
+      const shell = $("#terminal-shell").value;
+      const result = await api.startTerminal(workspace, shell);
+      currentTerminalJob = result.id;
+    }
+    await api.writeTerminal(currentTerminalJob, text + "\n");
+    $("#terminal-status").textContent = "Shell aktif";
+    $("#terminal-cancel").disabled = false;
   } catch (error) {
     writeTerminal(error.message, "error-line");
     finishTerminal();
@@ -722,21 +728,25 @@ async function runTerminalCommand(command) {
 
 function finishTerminal() {
   currentTerminalJob = null;
-  $("#terminal-command").disabled = false;
-  $("#terminal-run").disabled = false;
   $("#terminal-cancel").disabled = true;
-  $("#terminal-status").textContent = "Command runner";
+  $("#terminal-status").textContent = "Shell stopped";
   $("#terminal-command").focus();
 }
 
 api.onTerminalEvent((event) => {
+  if (event.type === "started") {
+    currentTerminalJob = event.id;
+    $("#terminal-status").textContent = "Shell aktif";
+    $("#terminal-cancel").disabled = false;
+  }
   if (event.type === "data") writeTerminal(event.data, event.stream === "stderr" ? "error-line" : "");
-  if (event.type === "started") currentTerminalJob = event.id;
   if (event.type === "error") writeTerminal(event.message, "error-line");
   if (event.type === "exit") {
-    writeTerminal("[process exited · code " + event.code + "]", "exit-line");
+    if (currentTerminalJob && event.id !== currentTerminalJob) return;
+    writeTerminal("[shell stopped · code " + event.code + "]", "exit-line");
     finishTerminal();
     refreshFiles();
+    refreshGitStatus();
   }
 });
 

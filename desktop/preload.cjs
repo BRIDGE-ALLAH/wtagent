@@ -18,7 +18,7 @@ contextBridge.exposeInMainWorld("wtagent", {
   resumeAgent: (options) => ipcRenderer.invoke("agent:resume", options),
   listSessions: () => ipcRenderer.invoke("agent:sessions"),
   resetAgent: () => ipcRenderer.invoke("agent:reset"),
-  sendAgent: (instruction) => ipcRenderer.invoke("agent:send", instruction),
+  sendAgent: (instruction, workflowMode) => ipcRenderer.invoke("agent:send", { instruction, workflowMode }),
   respondApproval: (requestId, choice) => ipcRenderer.invoke("agent:approval", { requestId, choice }),
   continueProviderSelection: () => ipcRenderer.invoke("agent:continue-provider"),
   cancelAgent: () => ipcRenderer.invoke("agent:cancel"),

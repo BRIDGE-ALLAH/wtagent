@@ -32,6 +32,7 @@ function setAgentStatus(text, mode = "ready") {
   agentBusy = mode === "busy";
   $("#cancel-agent").disabled = !agentBusy;
   $("#send-agent").disabled = agentBusy;
+  $("#agent-mode").disabled = agentBusy;
 }
 
 function persistChat() {
@@ -314,12 +315,13 @@ async function resumeSession(session) {
     $("#provider-select").value = session.provider || "chatgpt";
     $("#generation-select").value = session.generationType || "agent";
     $("#generation-select").disabled = $("#provider-select").value !== "gemini";
+    $("#agent-mode").value = session.workflowMode || "agent";
     restoreChat(session.sessionId, session.task);
     agentStarted = false;
     setAgentStatus(session.recoveryRequired ? "Memulihkan handoff…" : "Membuka sesi…", "busy");
     $("#provider-select").disabled = true;
     $("#generation-select").disabled = true;
-    await api.resumeAgent({ sessionId: session.sessionId });
+    await api.resumeAgent({ sessionId: session.sessionId, workflowMode: session.workflowMode || "agent" });
     await refreshGitStatus();
   } catch (error) {
     setAgentStatus("Gagal membuka sesi", "error");
@@ -694,10 +696,11 @@ async function sendAgent() {
         projectRoot: workspace,
         model: $("#provider-select").value,
         generationType: $("#provider-select").value === "gemini" ? $("#generation-select").value : "agent",
+        workflowMode: $("#agent-mode").value,
         instruction
       });
     } else {
-      await api.sendAgent(instruction);
+      await api.sendAgent(instruction, $("#agent-mode").value);
     }
     if (!agentBusy) setAgentStatus("Session siap");
   } catch (error) {
@@ -780,7 +783,6 @@ api.onAgentEvent((event) => {
       agentStarted = true;
       $("#provider-select").disabled = true;
       $("#generation-select").disabled = true;
-      $("#agent-mode").disabled = true;
       if (payload.provider) $("#provider-select").value = payload.provider;
       appendActivity(payload.resumed ? "Sesi dipulihkan" : "Session dimulai", payload.sessionId);
       if (payload.recoveryRequired) appendMessage("system", "Sesi memiliki operasi browser yang statusnya belum pasti. WTAgent akan melakukan bare recovery terlebih dahulu; jangan mengirim ulang instruksi yang sama sebelum proses ini selesai.", "notice");

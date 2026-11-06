@@ -134,12 +134,59 @@ async function startStaticServer() {
   return staticServer.address().port;
 }
 
-async function loadAgentService() {
+async function loadAgentService({ replaceExisting = false } = {}) {
+  if (agentService && !replaceExisting) return agentService;
+  if (agentService) await agentService.close().catch(() => {});
   const sourceRoot = app.isPackaged ? path.join(process.resourcesPath, "wtagent") : path.resolve(__dirname, "..");
   process.env.WTAGENT_HOME = process.env.WTAGENT_HOME || path.join(app.getPath("userData"), "wtagent");
   const moduleUrl = pathToFileURL(path.join(sourceRoot, "src", "desktop", "agent-service.js")).href;
   const imported = await import(moduleUrl);
   agentService = new imported.DesktopAgentService({ onEvent: (event) => send("agent:event", event) });
+  return agentService;
+}
+
+async function workspaceRoot(workspace) {
+  const root = await fs.realpath(String(workspace ?? activeWorkspace ?? ""));
+  if (!(await fs.stat(root)).isDirectory()) throw new Error("Workspace tidak valid.");
+  return root;
+}
+
+function runGit(cwd, args, { allowExitCodes = [] } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", args, {
+      cwd,
+      windowsHide: true,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", WTAGENT_HOME: process.env.WTAGENT_HOME },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { if (stdout.length < 1_500_000) stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { if (stderr.length < 300_000) stderr += chunk.toString("utf8"); });
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code === 0 || allowExitCodes.includes(code)) resolve({ stdout, stderr, code });
+      else reject(new Error((stderr || stdout || "Perintah Git gagal.").trim()));
+    });
+  });
+}
+
+function validateGitPath(filePath) {
+  const value = String(filePath ?? "").replaceAll("\\", "/");
+  if (!value || value.startsWith("/") || /^[a-zA-Z]:/.test(value)
+      || value.split("/").some((part) => part === "..") || value.includes("\0")) {
+    throw new Error("Path Git harus relatif dan berada di dalam workspace.");
+  }
+  return value;
+}
+
+function safeBranchName(value) {
+  const name = String(value ?? "").trim();
+  if (!name || name.length > 120 || name.startsWith("-") || !/^[a-zA-Z0-9._/-]+$/.test(name)
+      || name.includes("..") || name.endsWith("/") || name.endsWith(".lock")) {
+    throw new Error("Nama branch tidak valid.");
+  }
+  return name;
 }
 
 function registerIpc() {
@@ -197,8 +244,23 @@ function registerIpc() {
   });
 
   ipcMain.handle("agent:start", async (_event, args) => {
-    if (!agentService) await loadAgentService();
+    if (agentService?.running) throw new Error("Agent masih memproses tugas. Batalkan atau tunggu sampai selesai.");
+    await loadAgentService({ replaceExisting: Boolean(agentService?.session) });
     return { ok: true, result: await agentService.start(args) };
+  });
+  ipcMain.handle("agent:resume", async (_event, args) => {
+    if (agentService?.running) throw new Error("Agent masih memproses tugas.");
+    await loadAgentService({ replaceExisting: Boolean(agentService) });
+    return { ok: true, result: await agentService.resume(args) };
+  });
+  ipcMain.handle("agent:sessions", async () => {
+    await loadAgentService();
+    return await agentService.listSessions(40);
+  });
+  ipcMain.handle("agent:reset", async () => {
+    await agentService?.close().catch(() => {});
+    agentService = null;
+    return true;
   });
   ipcMain.handle("agent:send", async (_event, instruction) => {
     if (!agentService) throw new Error("Agent belum dimulai.");
@@ -211,27 +273,37 @@ function registerIpc() {
   });
   ipcMain.handle("agent:cancel", async () => agentService?.cancel() ?? false);
 
-  ipcMain.handle("terminal:run", async (_event, { workspace, command }) => {
-    const cwd = await fs.realpath(String(workspace ?? activeWorkspace ?? ""));
-    if (!(await fs.stat(cwd)).isDirectory()) throw new Error("Workspace terminal tidak valid.");
-    const text = String(command ?? "").trim();
-    if (!text) throw new Error("Perintah terminal kosong.");
+  ipcMain.handle("terminal:start", async (_event, { workspace, shell: shellChoice = "default" }) => {
+    const cwd = await workspaceRoot(workspace);
     const id = String(Date.now()) + "-" + Math.random().toString(16).slice(2, 8);
-    const child = spawn(text, {
-      cwd, shell: true, windowsHide: true,
-      env: { ...process.env, WTAGENT_HOME: process.env.WTAGENT_HOME },
-      stdio: ["ignore", "pipe", "pipe"],
+    let command;
+    let args;
+    if (process.platform === "win32") {
+      if (shellChoice === "cmd") { command = process.env.COMSPEC || "cmd.exe"; args = ["/Q"]; }
+      else if (shellChoice === "bash") { command = "bash"; args = ["--noprofile", "--norc", "-i"]; }
+      else { command = "powershell.exe"; args = ["-NoLogo", "-NoProfile", "-NoExit", "-Command", "-"]; }
+    } else if (shellChoice === "bash" || shellChoice === "default") {
+      command = process.env.SHELL || "bash";
+      args = ["--noprofile", "--norc", "-i"];
+    } else {
+      command = "bash";
+      args = ["--noprofile", "--norc", "-i"];
+    }
+    const child = spawn(command, args, {
+      cwd, windowsHide: true,
+      env: { ...process.env, WTAGENT_HOME: process.env.WTAGENT_HOME, TERM: "xterm-256color" },
+      stdio: ["pipe", "pipe", "pipe"],
     });
-    const job = { child, outputBytes: 0 };
-    terminalJobs.set(id, job);
-    send("terminal:event", { id, type: "started", command: text, cwd });
+    const terminal = { child, cwd, outputBytes: 0, truncated: false };
+    terminalJobs.set(id, terminal);
+    send("terminal:event", { id, type: "started", shell: shellChoice, cwd });
     const writeOutput = (stream, chunk) => {
       if (!terminalJobs.has(id)) return;
       const value = String(chunk ?? "");
-      job.outputBytes += Buffer.byteLength(value, "utf8");
-      if (job.outputBytes > MAX_TERMINAL_OUTPUT) {
-        send("terminal:event", { id, type: "data", stream, data: "\n[output truncated]\n" });
-        child.kill();
+      terminal.outputBytes += Buffer.byteLength(value, "utf8");
+      if (terminal.outputBytes > MAX_TERMINAL_OUTPUT) {
+        if (!terminal.truncated) send("terminal:event", { id, type: "data", stream: "stderr", data: "\n[output truncated; terminal tetap berjalan]\n" });
+        terminal.truncated = true;
         return;
       }
       send("terminal:event", { id, type: "data", stream, data: value });
@@ -243,13 +315,97 @@ function registerIpc() {
       terminalJobs.delete(id);
       send("terminal:event", { id, type: "exit", code, signal });
     });
-    return { id };
+    return { id, pid: child.pid };
   });
-  ipcMain.handle("terminal:cancel", async (_event, id) => {
-    const job = terminalJobs.get(id);
-    if (!job) return false;
-    job.child.kill();
+  ipcMain.handle("terminal:write", async (_event, { id, input }) => {
+    const terminal = terminalJobs.get(String(id));
+    if (!terminal || terminal.child.killed || !terminal.child.stdin.writable) throw new Error("Sesi terminal tidak aktif.");
+    terminal.child.stdin.write(String(input ?? ""));
     return true;
+  });
+  ipcMain.handle("terminal:stop", async (_event, id) => {
+    const terminal = terminalJobs.get(String(id));
+    if (!terminal) return false;
+    terminal.child.kill();
+    return true;
+  });
+
+  ipcMain.handle("git:status", async (_event, workspace) => {
+    const cwd = await workspaceRoot(workspace);
+    try {
+      const [statusResult, branchResult, branchesResult] = await Promise.all([
+        runGit(cwd, ["status", "--porcelain=v1", "--branch", "--untracked-files=all"]),
+        runGit(cwd, ["branch", "--show-current"]),
+        runGit(cwd, ["branch", "--format=%(refname:short)"]),
+      ]);
+      const lines = statusResult.stdout.split(/\r?\n/).filter(Boolean);
+      const changes = lines.filter((line) => !line.startsWith("##")).map((line) => ({
+        status: line.slice(0, 2),
+        path: line.slice(3),
+        staged: line[0] !== " " && line[0] !== "?",
+        untracked: line.startsWith("??"),
+      }));
+      return { isRepo: true, branch: branchResult.stdout.trim() || "(detached HEAD)", branches: branchesResult.stdout.split(/\r?\n/).filter(Boolean), changes };
+    } catch (error) {
+      return { isRepo: false, branch: "", branches: [], changes: [], error: error.message };
+    }
+  });
+  ipcMain.handle("git:diff", async (_event, { workspace, filePath }) => {
+    const cwd = await workspaceRoot(workspace);
+    const relative = validateGitPath(filePath);
+    let result = await runGit(cwd, ["diff", "--no-ext-diff", "--", relative]);
+    if (!result.stdout.trim()) result = await runGit(cwd, ["diff", "--cached", "--no-ext-diff", "--", relative]);
+    if (!result.stdout.trim()) {
+      const untracked = await runGit(cwd, ["diff", "--no-index", "--no-ext-diff", "--", process.platform === "win32" ? "NUL" : "/dev/null", relative], { allowExitCodes: [1] });
+      result = untracked;
+    }
+    return { path: relative, diff: result.stdout || "Tidak ada diff untuk file ini." };
+  });
+  ipcMain.handle("git:stage", async (_event, { workspace, filePath, staged = true }) => {
+    const cwd = await workspaceRoot(workspace);
+    const relative = validateGitPath(filePath);
+    if (staged) await runGit(cwd, ["add", "--", relative]);
+    else await runGit(cwd, ["restore", "--staged", "--", relative]);
+    return true;
+  });
+  ipcMain.handle("git:stage-all", async (_event, workspace) => {
+    const cwd = await workspaceRoot(workspace);
+    await runGit(cwd, ["add", "-A"]);
+    return true;
+  });
+  ipcMain.handle("git:commit", async (_event, { workspace, message }) => {
+    const cwd = await workspaceRoot(workspace);
+    const text = String(message ?? "").trim();
+    if (!text) throw new Error("Pesan commit tidak boleh kosong.");
+    if (text.length > 500) throw new Error("Pesan commit terlalu panjang.");
+    return await runGit(cwd, ["commit", "-m", text]);
+  });
+  ipcMain.handle("git:checkout", async (_event, { workspace, branch, create = false }) => {
+    const cwd = await workspaceRoot(workspace);
+    const name = safeBranchName(branch);
+    await runGit(cwd, create ? ["switch", "-c", name] : ["switch", name]);
+    return true;
+  });
+
+  ipcMain.handle("provider:profiles", async () => {
+    const sourceRoot = app.isPackaged ? path.join(process.resourcesPath, "wtagent") : path.resolve(__dirname, "..");
+    const moduleUrl = pathToFileURL(path.join(sourceRoot, "src", "browser", "provider-registry.js")).href;
+    const { PROVIDERS, getProviderProfileDir } = await import(moduleUrl);
+    const appDataDir = path.resolve(process.env.WTAGENT_HOME || path.join(app.getPath("userData"), "wtagent"));
+    const profiles = await Promise.all(Object.values(PROVIDERS).map(async (provider) => {
+      const directory = getProviderProfileDir(appDataDir, provider.id);
+      const exists = await fs.stat(directory).then((stat) => stat.isDirectory()).catch(() => false);
+      return { id: provider.id, label: provider.label, url: provider.baseUrl, directory, exists };
+    }));
+    return profiles;
+  });
+  ipcMain.handle("provider:open-profile", async (_event, providerId) => {
+    const sourceRoot = app.isPackaged ? path.join(process.resourcesPath, "wtagent") : path.resolve(__dirname, "..");
+    const moduleUrl = pathToFileURL(path.join(sourceRoot, "src", "browser", "provider-registry.js")).href;
+    const { getProviderProfileDir } = await import(moduleUrl);
+    const directory = getProviderProfileDir(path.resolve(process.env.WTAGENT_HOME || path.join(app.getPath("userData"), "wtagent")), providerId);
+    await fs.mkdir(directory, { recursive: true });
+    return await shell.openPath(directory);
   });
 }
 

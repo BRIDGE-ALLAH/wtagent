@@ -35,9 +35,24 @@ async function resolveWorkspaceFile(workspace, relativePath, allowMissing = fals
     return realCandidate;
   } catch (error) {
     if (!allowMissing || error.code !== "ENOENT") throw error;
-    const parent = await fs.realpath(path.dirname(candidate));
-    if (!isInside(root, parent)) throw new Error("Folder tujuan berada di luar workspace.");
-    return path.join(parent, path.basename(candidate));
+    // Resolve the nearest existing ancestor so nested new-file paths work,
+    // while still rejecting a symlinked ancestor that escapes the workspace.
+    let ancestor = path.dirname(candidate);
+    for (;;) {
+      try {
+        const realAncestor = await fs.realpath(ancestor);
+        if (!isInside(root, realAncestor)) {
+          throw new Error("Folder tujuan berada di luar workspace.");
+        }
+        const relativeTail = path.relative(ancestor, path.dirname(candidate));
+        return path.join(realAncestor, relativeTail, path.basename(candidate));
+      } catch (ancestorError) {
+        if (ancestorError.code !== "ENOENT") throw ancestorError;
+        const parent = path.dirname(ancestor);
+        if (parent === ancestor) throw ancestorError;
+        ancestor = parent;
+      }
+    }
   }
 }
 

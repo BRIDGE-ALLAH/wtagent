@@ -11,7 +11,7 @@
     window.MonacoEnvironment = {
       getWorkerUrl: function () {
         const source = "self.MonacoEnvironment = { baseUrl: '/monaco/' }; importScripts('/monaco/vs/base/worker/workerMain.js');";
-        return "data:text/javascript;charset=utf-8," + encodeURIComponent(source);
+        return URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
       }
     };
     require.config({ paths: { vs: "/monaco/vs" } });

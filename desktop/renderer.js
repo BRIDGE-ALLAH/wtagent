@@ -230,7 +230,12 @@ async function openFile(filePath) {
   if (!workspace) return;
   if (editor && activeFile && editor.getValue() !== savedContent) {
     const shouldSave = confirm("Ada perubahan yang belum disimpan. Simpan sekarang?");
-    if (shouldSave) await saveFile();
+    if (shouldSave) {
+      await saveFile();
+      if (editor.getValue() !== savedContent) return;
+    } else if (!confirm("Buang perubahan yang belum disimpan?")) {
+      return;
+    }
   }
   try {
     const result = await api.readFile(workspace, filePath);

@@ -9,14 +9,14 @@ async function collectJavaScriptFiles(directory) {
     const fullPath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
       files.push(...await collectJavaScriptFiles(fullPath));
-    } else if (entry.isFile() && entry.name.endsWith(".js")) {
+    } else if (entry.isFile() && [".js", ".mjs", ".cjs"].includes(path.extname(entry.name))) {
       files.push(fullPath);
     }
   }
   return files;
 }
 
-const roots = ["src", "scripts", "test"];
+const roots = ["src", "scripts", "test", "desktop"];
 const files = [];
 for (const root of roots) {
   try {

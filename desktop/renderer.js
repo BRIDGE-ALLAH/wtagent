@@ -198,6 +198,258 @@ function showApproval(payload) {
   $("#chat-feed").scrollTop = $("#chat-feed").scrollHeight;
 }
 
+
+function getProviderPreferences() {
+  try {
+    const value = JSON.parse(localStorage.getItem("wtagent.provider-preferences") || "{}");
+    return { defaultProvider: value.defaultProvider || "chatgpt", providers: value.providers || {} };
+  } catch {
+    return { defaultProvider: "chatgpt", providers: {} };
+  }
+}
+
+function saveProviderPreferences(value) {
+  localStorage.setItem("wtagent.provider-preferences", JSON.stringify(value));
+}
+
+async function openModelsManager() {
+  $("#models-modal").classList.remove("hidden");
+  const preferences = getProviderPreferences();
+  const select = $("#models-default-provider");
+  select.replaceChildren();
+  for (const option of $("#provider-select").options) {
+    select.add(new Option(option.textContent, option.value));
+  }
+  select.value = preferences.defaultProvider;
+  try {
+    const profiles = await api.providerProfiles();
+    const host = $("#provider-profile-list");
+    host.replaceChildren();
+    for (const profile of profiles) {
+      const card = document.createElement("div");
+      card.className = "provider-profile-card";
+      const top = document.createElement("div");
+      top.className = "provider-profile-top";
+      const name = document.createElement("span");
+      name.className = "provider-profile-name";
+      name.textContent = profile.label;
+      const status = document.createElement("span");
+      status.className = "provider-profile-state" + (profile.exists ? "" : " missing");
+      status.textContent = profile.exists ? "Folder profil ada" : "Belum dibuat";
+      top.append(name, status);
+      const directory = document.createElement("div");
+      directory.className = "provider-profile-path";
+      directory.textContent = profile.directory;
+      const controls = document.createElement("div");
+      controls.className = "provider-profile-controls";
+      const model = document.createElement("input");
+      model.className = "provider-model-note";
+      model.placeholder = "Catatan model favorit";
+      model.value = preferences.providers[profile.id]?.modelName || "";
+      model.dataset.provider = profile.id;
+      model.addEventListener("change", () => {
+        const current = getProviderPreferences();
+        current.providers[profile.id] = { ...(current.providers[profile.id] || {}), modelName: model.value.trim() };
+        saveProviderPreferences(current);
+      });
+      const open = document.createElement("button");
+      open.textContent = "Buka folder";
+      open.addEventListener("click", async () => {
+        const error = await api.openProviderProfile(profile.id);
+        if (error) alert(error);
+      });
+      controls.append(model, open);
+      card.append(top, directory, controls);
+      host.append(card);
+    }
+  } catch (error) {
+    $("#provider-profile-list").textContent = "Gagal memuat profil: " + error.message;
+  }
+}
+
+async function loadSessions() {
+  const host = $("#session-list");
+  host.replaceChildren();
+  try {
+    const sessions = await api.listSessions();
+    if (!sessions.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-tree";
+      empty.textContent = "Belum ada sesi WTAgent yang tersimpan.";
+      host.append(empty);
+      return;
+    }
+    for (const session of sessions) {
+      const button = document.createElement("button");
+      button.className = "session-entry";
+      const main = document.createElement("div");
+      main.className = "session-entry-main";
+      const title = document.createElement("div");
+      title.className = "session-entry-title";
+      title.textContent = session.task || "Sesi tanpa judul";
+      const meta = document.createElement("div");
+      meta.className = "session-entry-meta";
+      meta.textContent = [session.provider, session.phase, session.updatedAt ? new Date(session.updatedAt).toLocaleString() : "", session.projectRoot].filter(Boolean).join(" · ");
+      main.append(title, meta);
+      const state = document.createElement("span");
+      state.className = "session-entry-state";
+      state.textContent = session.recoveryRequired ? "Recovery" : session.sessionId === currentSessionId ? "Aktif" : "Lanjutkan";
+      button.append(main, state);
+      button.addEventListener("click", () => resumeSession(session));
+      host.append(button);
+    }
+  } catch (error) {
+    const item = document.createElement("div");
+    item.className = "empty-tree";
+    item.textContent = "Gagal memuat sesi: " + error.message;
+    host.append(item);
+  }
+}
+
+async function resumeSession(session) {
+  if (!session.projectRoot) return alert("Sesi ini tidak memiliki folder proyek.");
+  try {
+    $("#sessions-modal").classList.add("hidden");
+    await setWorkspace(session.projectRoot);
+    $("#provider-select").value = session.provider || "chatgpt";
+    $("#generation-select").value = session.generationType || "agent";
+    $("#generation-select").disabled = $("#provider-select").value !== "gemini";
+    restoreChat(session.sessionId, session.task);
+    agentStarted = false;
+    setAgentStatus(session.recoveryRequired ? "Memulihkan handoff…" : "Membuka sesi…", "busy");
+    $("#provider-select").disabled = true;
+    $("#generation-select").disabled = true;
+    await api.resumeAgent({ sessionId: session.sessionId });
+    await refreshGitStatus();
+  } catch (error) {
+    setAgentStatus("Gagal membuka sesi", "error");
+    appendMessage("system", error.message, "error");
+  }
+}
+
+async function openSessionsManager() {
+  $("#sessions-modal").classList.remove("hidden");
+  await loadSessions();
+}
+
+async function startNewSession() {
+  if (agentBusy) {
+    alert("Tunggu atau batalkan proses agent sebelum memulai sesi baru.");
+    return;
+  }
+  if (currentSessionId && !confirm("Simpan sesi saat ini dan mulai percakapan baru?")) return;
+  try {
+    await api.resetAgent();
+    currentSessionId = "";
+    chatHistory = [];
+    agentStarted = false;
+    $("#provider-select").disabled = false;
+    $("#generation-select").disabled = $("#provider-select").value !== "gemini";
+    $("#chat-feed").replaceChildren();
+    appendMessage("system", "Sesi baru siap. Riwayat sesi sebelumnya tetap tersimpan dan dapat dibuka dari tombol Sesi.");
+    setAgentStatus(workspace ? "Workspace siap · pilih tugas" : "Ready · pilih workspace");
+  } catch (error) {
+    appendMessage("system", error.message, "error");
+  }
+}
+
+async function refreshGitStatus() {
+  const note = $("#git-status-note");
+  if (!workspace) {
+    note.textContent = "Buka folder proyek untuk melihat Git.";
+    $("#git-changes").textContent = "Belum ada workspace.";
+    return;
+  }
+  note.textContent = "Memeriksa Git…";
+  try {
+    gitState = await api.gitStatus(workspace);
+    const select = $("#git-branch-select");
+    const previous = select.value;
+    select.replaceChildren();
+    for (const branch of gitState.branches) select.add(new Option(branch, branch));
+    if (gitState.branch && !gitState.branches.includes(gitState.branch)) select.add(new Option(gitState.branch, gitState.branch));
+    select.value = gitState.branch || "";
+    if (previous && gitState.branches.includes(previous) && previous === gitState.branch) select.value = previous;
+    $("#status-branch").textContent = gitState.branch ? "⑂ " + gitState.branch : "⑂";
+    $("#git-stage-all").disabled = !gitState.isRepo || !gitState.changes.length;
+    $("#git-commit-message").disabled = !gitState.isRepo;
+    $("#git-commit-form button").disabled = !gitState.isRepo;
+    renderGitChanges();
+    note.textContent = !gitState.isRepo ? gitState.error || "Folder ini bukan repository Git." : gitState.changes.length + " perubahan · " + gitState.branches.length + " branch";
+  } catch (error) {
+    note.textContent = error.message;
+  }
+}
+
+function renderGitChanges() {
+  const host = $("#git-changes");
+  host.replaceChildren();
+  if (!gitState.isRepo) {
+    const empty = document.createElement("div");
+    empty.className = "empty-tree";
+    empty.textContent = gitState.error || "Bukan repository Git.";
+    host.append(empty);
+    return;
+  }
+  if (!gitState.changes.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-tree";
+    empty.textContent = "Working tree bersih.";
+    host.append(empty);
+    return;
+  }
+  for (const change of gitState.changes) {
+    const row = document.createElement("div");
+    row.className = "git-change-row";
+    const open = document.createElement("button");
+    open.className = "git-change-open";
+    open.title = "Lihat diff";
+    const file = document.createElement("span");
+    file.className = "git-change-path";
+    file.textContent = change.path;
+    const status = document.createElement("span");
+    status.className = "git-change-status";
+    status.textContent = change.status;
+    open.append(file, status);
+    open.addEventListener("click", () => showGitDiff(change.path));
+    const stage = document.createElement("button");
+    stage.className = "git-change-action";
+    stage.title = change.staged ? "Unstage" : "Stage";
+    stage.textContent = change.staged ? "−" : "+";
+    stage.addEventListener("click", async () => {
+      try {
+        await api.gitStage(workspace, change.path, !change.staged);
+        await refreshGitStatus();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    row.append(open, stage);
+    host.append(row);
+  }
+}
+
+async function showGitDiff(filePath) {
+  try {
+    const result = await api.gitDiff(workspace, filePath);
+    $("#diff-title").textContent = result.path;
+    $("#diff-content").textContent = result.diff;
+    $("#diff-view").classList.remove("hidden");
+    if (editor) $("#editor-host").style.display = "none";
+  } catch (error) {
+    alert("Gagal membuka diff: " + error.message);
+  }
+}
+
+function showSidebarView(view) {
+  const isGit = view === "git";
+  $("#explorer-view").classList.toggle("hidden", isGit);
+  $("#git-panel").classList.toggle("hidden", !isGit);
+  $("#explorer-tab").classList.toggle("active", !isGit);
+  $("#source-control-tab").classList.toggle("active", isGit);
+  if (isGit) refreshGitStatus();
+}
+
 function getLanguage(filePath) {
   const ext = (filePath.split(".").pop() || "").toLowerCase();
   const names = {

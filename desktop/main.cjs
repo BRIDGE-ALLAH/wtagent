@@ -279,9 +279,9 @@ function registerIpc() {
     let command;
     let args;
     if (process.platform === "win32") {
-      if (shellChoice === "cmd") { command = process.env.COMSPEC || "cmd.exe"; args = ["/Q"]; }
+      if (shellChoice === "powershell") { command = "powershell.exe"; args = ["-NoLogo", "-NoProfile", "-NoExit"]; }
       else if (shellChoice === "bash") { command = "bash"; args = ["--noprofile", "--norc", "-i"]; }
-      else { command = "powershell.exe"; args = ["-NoLogo", "-NoProfile", "-NoExit", "-Command", "-"]; }
+      else { command = process.env.COMSPEC || "cmd.exe"; args = ["/Q"]; }
     } else if (shellChoice === "bash" || shellChoice === "default") {
       command = process.env.SHELL || "bash";
       args = ["--noprofile", "--norc", "-i"];
@@ -353,13 +353,16 @@ function registerIpc() {
   ipcMain.handle("git:diff", async (_event, { workspace, filePath }) => {
     const cwd = await workspaceRoot(workspace);
     const relative = validateGitPath(filePath);
-    let result = await runGit(cwd, ["diff", "--no-ext-diff", "--", relative]);
-    if (!result.stdout.trim()) result = await runGit(cwd, ["diff", "--cached", "--no-ext-diff", "--", relative]);
-    if (!result.stdout.trim()) {
+    const [working, staged] = await Promise.all([
+      runGit(cwd, ["diff", "--no-ext-diff", "--", relative]),
+      runGit(cwd, ["diff", "--cached", "--no-ext-diff", "--", relative]),
+    ]);
+    let diff = [staged.stdout.trim(), working.stdout.trim()].filter(Boolean).join("\n\n");
+    if (!diff) {
       const untracked = await runGit(cwd, ["diff", "--no-index", "--no-ext-diff", "--", process.platform === "win32" ? "NUL" : "/dev/null", relative], { allowExitCodes: [1] });
-      result = untracked;
+      diff = untracked.stdout;
     }
-    return { path: relative, diff: result.stdout || "Tidak ada diff untuk file ini." };
+    return { path: relative, diff: diff || "Tidak ada diff untuk file ini." };
   });
   ipcMain.handle("git:stage", async (_event, { workspace, filePath, staged = true }) => {
     const cwd = await workspaceRoot(workspace);

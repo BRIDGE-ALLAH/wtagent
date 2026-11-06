@@ -274,6 +274,9 @@ function registerIpc() {
   ipcMain.handle("agent:cancel", async () => agentService?.cancel() ?? false);
 
   ipcMain.handle("terminal:start", async (_event, { workspace, shell: shellChoice = "default" }) => {
+    if (process.platform !== "win32" && ["cmd", "powershell"].includes(shellChoice)) {
+      throw new Error("CMD dan PowerShell hanya tersedia pada Windows. Pilih Default shell atau Bash.");
+    }
     const cwd = await workspaceRoot(workspace);
     const id = String(Date.now()) + "-" + Math.random().toString(16).slice(2, 8);
     let command;

@@ -1,0 +1,81 @@
+name: desktop-build
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/check-syntax.js"
+      - ".github/workflows/desktop-build.yml"
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/check-syntax.js"
+      - ".github/workflows/desktop-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate WTAgent and desktop sources
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.13.0
+          cache: npm
+
+      - name: Install WTAgent dependencies
+        run: npm ci --engine-strict
+
+      - name: Check JavaScript syntax
+        run: npm run check
+
+      - name: Run WTAgent tests
+        run: npm test
+
+  package-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+    needs: validate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.13.0
+          cache: npm
+
+      - name: Install WTAgent dependencies
+        run: npm ci --engine-strict
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm install --no-audit --no-fund
+
+      - name: Build Windows NSIS installer
+        working-directory: desktop
+        run: npm run dist:win
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v6
+        with:
+          name: WTAgent-Studio-Windows-Installer
+          path: desktop/dist/*.exe
+          if-no-files-found: error
+          retention-days: 14

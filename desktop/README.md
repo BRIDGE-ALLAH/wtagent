@@ -39,7 +39,7 @@ Build output is written to `desktop/dist/`. macOS distribution signing/notarizat
 ## Current desktop features
 
 - Workspace folder picker, explorer, Monaco editor, file save, and nested file creation (`Ctrl/Cmd+S`)
-- Persistent shell process for consecutive commands and long-running development servers (`Ctrl/Cmd+J` toggles the panel)
+- Persistent shell process for sequential commands (`Ctrl/Cmd+J` toggles the panel); background servers can be launched with the host shell’s background command
 - AI chat wired to WTAgent's existing `AgentRuntime`, with per-action approval controls
 - Workflow modes: **Agent**, **Plan only**, and **Build & verify**. Plan only denies non-read-only tools in the runtime policy; Build & verify asks the model to inspect, plan, implement, run relevant checks, and review the diff.
 - Git source control: current branch, changed-file list, staged/unstaged diff, stage/unstage, create/switch branch, and local commit
@@ -48,7 +48,7 @@ Build output is written to `desktop/dist/`. macOS distribution signing/notarizat
 
 ## Notes and current limitations
 
-- The shell process is persistent and accepts additional commands while another process runs, but it is not backed by a native PTY. Full-screen terminal programs, raw keyboard modes, and rich terminal emulation (for example `vim` or `top`) are not supported reliably. Stop ends the shell process.
+- The shell process is persistent across sequential commands, but it is not backed by a native PTY. A foreground command occupies the shell until it exits; for a background dev server, use `start /B ...` in CMD, `Start-Process ...` in PowerShell, or `... &` in Bash. Full-screen terminal programs, raw keyboard modes, and rich terminal emulation (for example `vim` or `top`) are not supported reliably. Stop ends the shell process.
 - The Git panel performs local operations only. It does not push, fetch, or publish to a remote.
 - Provider profile status means that a local profile folder exists; it does not prove that the provider is signed in. WTAgent still asks you to complete login in its browser when required.
 - The preferred-model field is a note for your own reference. WTAgent does not automatically select model names on provider websites; choose the actual model in the provider browser.

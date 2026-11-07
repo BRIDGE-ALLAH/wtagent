@@ -24,3 +24,21 @@ export function getSessionRecoveryStatus(state = {}) {
       : null,
   };
 }
+
+
+export function assertSessionCanAcceptInstruction(state = {}, instruction = "") {
+  const status = getSessionRecoveryStatus(state);
+  if (status.blocked) {
+    const error = new Error(status.reason);
+    error.code = status.code;
+    throw error;
+  }
+  if (status.requiresBareResume && String(instruction ?? "").trim()) {
+    const error = new Error(
+      "A pending provider handoff or tool result must be reconciled with a bare resume before accepting new instructions.",
+    );
+    error.code = "RECOVERY_REQUIRES_BARE_RESUME";
+    throw error;
+  }
+  return status;
+}

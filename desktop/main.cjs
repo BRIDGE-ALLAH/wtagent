@@ -5,12 +5,14 @@ const http = require("node:http");
 const { createReadStream } = require("node:fs");
 const { spawn } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
+const { stopTerminalProcess, writeTerminalInput } = require("./terminal-supervisor.cjs");
 
 let mainWindow = null;
 let staticServer = null;
 let agentService = null;
 let activeWorkspace = null;
 const terminalJobs = new Map();
+let quitCleanupStarted = false;
 
 const IGNORED_DIRS = new Set([".git", "node_modules", ".next", "dist", "build", "coverage", ".wtagent"]);
 const MAX_EDITOR_FILE_BYTES = 2 * 1024 * 1024;
@@ -151,24 +153,36 @@ async function workspaceRoot(workspace) {
   return root;
 }
 
-function runGit(cwd, args, { allowExitCodes = [] } = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn("git", args, {
-      cwd,
-      windowsHide: true,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", WTAGENT_HOME: process.env.WTAGENT_HOME },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => { if (stdout.length < 1_500_000) stdout += chunk.toString("utf8"); });
-    child.stderr.on("data", (chunk) => { if (stderr.length < 300_000) stderr += chunk.toString("utf8"); });
-    child.once("error", reject);
-    child.once("close", (code) => {
-      if (code === 0 || allowExitCodes.includes(code)) resolve({ stdout, stderr, code });
-      else reject(new Error((stderr || stdout || "Perintah Git gagal.").trim()));
-    });
+async function runGit(cwd, args, { allowExitCodes = [] } = {}) {
+  const moduleUrl = pathToFileURL(
+    path.join(__dirname, "..", "src", "tools", "terminal-exec.js"),
+  ).href;
+  const { runProgram } = await import(moduleUrl);
+  const envOverrides = { GIT_TERMINAL_PROMPT: "0" };
+  if (process.env.WTAGENT_HOME) envOverrides.WTAGENT_HOME = process.env.WTAGENT_HOME;
+  const result = await runProgram({
+    program: "git",
+    argv: args,
+    cwd,
+    timeoutMs: 30_000,
+    maxOutputBytes: 1_800_000,
+    maxLogBytes: 0,
+    envOverrides,
   });
+  if (result.timedOut) {
+    const error = new Error("Perintah Git melewati batas waktu eksekusi.");
+    error.code = "GIT_TIMEOUT";
+    error.completionUnknown = result.completionUnknown === true;
+    throw error;
+  }
+  if (result.error) throw result.error;
+  if (result.exitCode === 0 || allowExitCodes.includes(result.exitCode)) {
+    return { stdout: result.stdout, stderr: result.stderr, code: result.exitCode, truncated: result.truncated };
+  }
+  const error = new Error((result.stderr || result.stdout || "Perintah Git gagal.").trim());
+  error.code = "GIT_COMMAND_FAILED";
+  error.exitCode = result.exitCode;
+  throw error;
 }
 
 function validateGitPath(filePath) {
@@ -304,10 +318,16 @@ function registerIpc() {
     }
     const child = spawn(command, args, {
       cwd, windowsHide: true,
+      detached: process.platform !== "win32",
       env: { ...process.env, WTAGENT_HOME: process.env.WTAGENT_HOME, TERM: "xterm-256color" },
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const terminal = { child, cwd, outputBytes: 0, truncated: false };
+    let resolveClose;
+    const closePromise = new Promise((resolve) => { resolveClose = resolve; });
+    const terminal = {
+      child, cwd, outputBytes: 0, truncated: false,
+      closed: false, closePromise, resolveClose, stopPromise: null,
+    };
     terminalJobs.set(id, terminal);
     send("terminal:event", { id, type: "started", shell: shellChoice, cwd });
     const writeOutput = (stream, chunk) => {
@@ -325,6 +345,8 @@ function registerIpc() {
     child.stderr.on("data", (chunk) => writeOutput("stderr", chunk));
     child.once("error", (error) => send("terminal:event", { id, type: "error", message: error.message }));
     child.once("close", (code, signal) => {
+      terminal.closed = true;
+      terminal.resolveClose();
       terminalJobs.delete(id);
       send("terminal:event", { id, type: "exit", code, signal });
     });
@@ -332,15 +354,14 @@ function registerIpc() {
   });
   ipcMain.handle("terminal:write", async (_event, { id, input }) => {
     const terminal = terminalJobs.get(String(id));
-    if (!terminal || terminal.child.killed || !terminal.child.stdin.writable) throw new Error("Sesi terminal tidak aktif.");
-    terminal.child.stdin.write(String(input ?? ""));
-    return true;
+    if (!terminal) throw new Error("Sesi terminal tidak aktif.");
+    return await writeTerminalInput(terminal, input);
   });
   ipcMain.handle("terminal:stop", async (_event, id) => {
     const terminal = terminalJobs.get(String(id));
     if (!terminal) return false;
-    terminal.child.kill();
-    return true;
+    const result = await stopTerminalProcess(terminal);
+    return result.status === "exited";
   });
 
   ipcMain.handle("git:status", async (_event, workspace) => {
@@ -451,10 +472,22 @@ app.whenReady().then(async () => {
   app.quit();
 });
 
-app.on("before-quit", () => {
-  agentService?.close().catch(() => {});
-  for (const job of terminalJobs.values()) job.child.kill();
-  staticServer?.close();
+app.on("before-quit", (event) => {
+  if (quitCleanupStarted) return;
+  event.preventDefault();
+  quitCleanupStarted = true;
+  void (async () => {
+    await Promise.all(
+      [...terminalJobs.values()].map((job) => (
+        stopTerminalProcess(job).catch(() => ({ status: "completion_unknown" }))
+      )),
+    );
+    await agentService?.close().catch(() => {});
+    if (staticServer?.listening) {
+      await new Promise((resolve) => staticServer.close(resolve));
+    }
+    app.quit();
+  })();
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

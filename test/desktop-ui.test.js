@@ -101,7 +101,8 @@ test("autonomous implementation cannot be reported complete without a verificati
   assert.match(renderer, /desktop\.autonomous_verification_required/);
   assert.match(renderer, /api\.acceptAutonomousVerification/);
   assert.match(service, /autonomous\.user_accepted/);
-  assert.match(renderer, /belum dinyatakan selesai/);
+  assert.match(renderer, /showAutonomousVerification/);
+  assert.match(renderer, /Verifikasi hasil diperlukan/);
   assert.match(workflow, /phase: "verification_required"/);
   assert.match(workflow, /completedAt: null/);
 });

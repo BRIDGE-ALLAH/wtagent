@@ -244,7 +244,11 @@ async function runCheck(check, {
     };
 
     const terminate = async () => {
-      if (closed || !child?.pid) return;
+      if (closed) return;
+      if (!child?.pid) {
+        finish("timed_out", { completionKnown: false, error: "The timed-out process has no observable PID." });
+        return;
+      }
       await boundedKill(killProcessTreeImpl, child.pid, "SIGTERM");
       if (await waitForClose({ closed, closePromise }, stopGraceMs)) return;
       if (closed) return;
@@ -307,7 +311,7 @@ export async function runAutonomousVerification({
       status: resolved.status === "unsupported" ? "unsupported" : "unavailable",
       startedAt: new Date().toISOString(),
       finishedAt: new Date().toISOString(),
-      checks: [],
+      checks: resolved.unsupported,
       unsupported: resolved.unsupported,
       reason: resolved.reason,
     };
@@ -386,7 +390,10 @@ export function recordAutonomousMachineVerification(workflow, result, now = new 
   if (!workflow || workflow.version !== 1 || workflow.phase !== "implementing") {
     throw new Error("Autonomous workflow is not in the implementation phase.");
   }
-  const checks = Array.isArray(result?.checks) ? result.checks : [];
+  const checks = [
+    ...(Array.isArray(result?.checks) ? result.checks : []),
+    ...(Array.isArray(result?.unsupported) ? result.unsupported : []),
+  ];
   const machineVerified = result?.status === "passed"
     && checks.length > 0
     && checks.every((check) => check.status === "passed" && check.exitCode === 0 && check.completionKnown === true);

@@ -57,9 +57,9 @@ test("desktop workflows include safe plan-only enforcement and real session reco
   assert.match(renderer, /WORKFLOW: PLAN, IMPLEMENT, AND VERIFY/);
   assert.match(renderer, /showAutonomousPlan/);
   assert.match(renderer, /showWorkspaceRollback/);
-  assert.match(service, /WorkspaceCheckpoint\\.create/);
-  assert.match(service, /WorkspaceCheckpoint\\.finalize/);
-  assert.match(service, /WorkspaceCheckpoint\\.rollback/);
+  assert.match(service, /WorkspaceCheckpoint\.create/);
+  assert.match(service, /WorkspaceCheckpoint\.finalize/);
+  assert.match(service, /WorkspaceCheckpoint\.rollback/);
   assert.match(html, /value="autonomous"/);
 });
 

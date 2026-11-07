@@ -73,6 +73,15 @@ class StreamCapture {
   }
 }
 
+async function requestProcessKill(killProcessTreeImpl, pid, signal) {
+  let timer;
+  await Promise.race([
+    Promise.resolve().then(() => killProcessTreeImpl(pid, signal)).catch(() => undefined),
+    new Promise((resolve) => { timer = setTimeout(resolve, 500); }),
+  ]);
+  clearTimeout(timer);
+}
+
 function allocateOutputBudgets({ stdoutBytes, stderrBytes, maxBytes, preferStderr }) {
   if (stdoutBytes + stderrBytes <= maxBytes) {
     return { stdout: stdoutBytes, stderr: stderrBytes };
@@ -104,6 +113,10 @@ export async function runProgram({
   spawnImpl = spawn,
   platform = process.platform,
   resolveLaunchPlanImpl = resolveLaunchPlan,
+  killProcessTreeImpl = killProcessTree,
+  stopGraceMs = 1_000,
+  forceGraceMs = 1_000,
+  envOverrides = {},
 }) {
   return await new Promise((resolve) => {
     const startedAt = Date.now();
@@ -117,7 +130,10 @@ export async function runProgram({
     let settled = false;
     let terminationGuard = null;
     let outputQueue = Promise.resolve();
-    const environment = buildToolEnvironment({ inheritSensitive: inheritSensitiveEnv });
+    const environment = {
+      ...buildToolEnvironment({ inheritSensitive: inheritSensitiveEnv }),
+      ...envOverrides,
+    };
     const launchPlan = resolveLaunchPlanImpl({
       program,
       argv,
@@ -224,22 +240,21 @@ export async function runProgram({
 
     const timer = setTimeout(async () => {
       timedOut = true;
-      await killProcessTree(child.pid);
+      await requestProcessKill(killProcessTreeImpl, child.pid, "SIGTERM");
+      if (settled) return;
 
-      if (settled) {
-        return;
-      }
-
-      terminationGuard = setTimeout(() => {
-        void finish({
-          ok: false,
-          exitCode: null,
-          signal: null,
-          completionUnknown: true,
-        });
-      }, 1_000);
-      terminationGuard.unref?.();
+      terminationGuard = setTimeout(async () => {
+        await requestProcessKill(killProcessTreeImpl, child.pid, "SIGKILL");
+        if (settled) return;
+        terminationGuard = setTimeout(() => {
+          void finish({
+            ok: false,
+            exitCode: null,
+            signal: null,
+            completionUnknown: true,
+          });
+        }, forceGraceMs);
+        }, stopGraceMs);
     }, timeoutMs);
-    timer.unref?.();
   });
 }

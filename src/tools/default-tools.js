@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { z } from "zod";
 import { DEFAULT_LIMITS } from "../shared/limits.js";
 import { utf8PrefixBuffer } from "../shared/text-budget.js";
@@ -11,7 +10,7 @@ import {
 } from "../policy/path-guard.js";
 import { ToolRegistry } from "./registry.js";
 import { runProgram } from "./terminal-exec.js";
-import { resolveLaunchPlan } from "../platform/command-launcher.js";
+import { buildToolEnvironment } from "./safe-env.js";
 import {
   DEFAULT_SEARCH_EXCLUDED_DIRS,
   fallbackSearch,
@@ -175,18 +174,12 @@ async function rgSearch({
     "--max-count",
     String(maxResults),
   ];
-  if (!regex) {
-    argv.push("--fixed-strings");
-  }
-  if (glob) {
-    argv.push("--glob", glob);
-  }
-  for (const pattern of exclude ?? []) {
-    argv.push("--glob", `!${pattern}`);
-  }
+  if (!regex) argv.push("--fixed-strings");
+  if (glob) argv.push("--glob", glob);
+  for (const pattern of exclude ?? []) argv.push("--glob", `!${pattern}`);
   argv.push("--", query, searchPath);
 
-  const rgEnvironment = { ...process.env };
+  const rgEnvironment = buildToolEnvironment({ inheritSensitive: false });
   const pathKey = Object.keys(rgEnvironment)
     .find((key) => key.toUpperCase() === "PATH") ?? "PATH";
   if (rgEnvironment[pathKey]) {
@@ -204,40 +197,33 @@ async function rgSearch({
       .join(path.delimiter);
   }
 
-  // Resolve `rg` through the same launch planner as terminal.exec so that
-  // Windows .cmd/.bat shims (e.g. an npm-installed ripgrep) work consistently.
-  const launchPlan = resolveLaunchPlan({
+  const result = await runProgram({
     program: "rg",
     argv,
     cwd: process.cwd(),
-    env: rgEnvironment,
+    timeoutMs: 15_000,
+    maxOutputBytes: 1_000_000,
+    maxLogBytes: 0,
+    envOverrides: rgEnvironment,
   });
-
-  return await new Promise((resolve, reject) => {
-    const child = spawn(launchPlan.command, launchPlan.args, {
-      env: rgEnvironment,
-      shell: launchPlan.shell,
-      windowsHide: true,
-      windowsVerbatimArguments: launchPlan.windowsVerbatimArguments === true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.once("error", reject);
-    child.once("close", (code) => {
-      if (code === 0 || code === 1) {
-        resolve({ stdout, stderr, code });
-      } else {
-        reject(new Error(stderr || `rg exited with ${code}`));
-      }
-    });
-  });
+  if (result.timedOut) {
+    const error = new Error("Project search timed out.");
+    error.code = "RG_TIMEOUT";
+    error.completionUnknown = result.completionUnknown === true;
+    throw error;
+  }
+  if (result.error) throw result.error;
+  if (result.exitCode === 0 || result.exitCode === 1) {
+    return {
+      stdout: result.stdout,
+      stderr: result.stderr,
+      code: result.exitCode,
+      truncated: result.truncated,
+    };
+  }
+  const error = new Error((result.stderr || result.stdout || `rg exited with ${result.exitCode}`).trim());
+  error.code = "RG_FAILED";
+  throw error;
 }
 
 export function createDefaultToolRegistry({
@@ -440,6 +426,7 @@ export function createDefaultToolRegistry({
         .map((pattern) => pattern.trim())
         .filter(Boolean);
       let output;
+      let outputTruncated = false;
       let engine = "rg";
       try {
         const result = await rgSearch({
@@ -451,6 +438,7 @@ export function createDefaultToolRegistry({
           maxResults: args.max_results,
         });
         output = result.stdout;
+        outputTruncated = result.truncated === true;
       } catch (error) {
         if (error.code !== "ENOENT") {
           throw error;
@@ -468,7 +456,7 @@ export function createDefaultToolRegistry({
       return {
         ok: true,
         message: output ? "Search completed." : "No matches.",
-        data: { engine, matches: output },
+        data: { engine, matches: output, truncated: outputTruncated },
       };
     },
   });

@@ -12,7 +12,8 @@ WTAgent's autonomous workflow is a staged engineering process, not a model-respo
 - `awaiting_approval`: a bounded plan is persisted with a SHA-256 checksum.
 - `implementing`: explicit approval and a pre-implementation workspace checkpoint are persisted before the implementation turn.
 - `verification_required`: the implementation model turn ended. This is **not** a success state and does not imply that acceptance criteria, tests, builds, or regression checks passed.
-- `completed`: reserved for a future explicit verification/acceptance transition; the current desktop autonomous path must not set it merely because the provider emitted `run.completed`.
+- `accepted`: the user explicitly recorded a verification/review note. This is a human attestation, not an automated pass verdict.
+- `completed`: reserved for a future machine-verified state; the current desktop autonomous path must not set it merely because the provider emitted `run.completed`.
 
 ## Persistence and recovery
 
@@ -24,7 +25,7 @@ A bare resume of `verification_required` returns the persisted state instead of 
 
 The runtime's `run.completed` event means the model turn ended. It does not mean the task passed its acceptance criteria. WTAgent therefore records `autonomous.verification_required` and emits `desktop.autonomous_verification_required`. The renderer tells the user to inspect the diff and run relevant checks.
 
-The current gate is deliberately conservative and human-visible. It does not claim to parse or validate arbitrary test commands. The next verification-engine milestone should:
+The current gate is deliberately conservative and human-visible. After checking the diff and running relevant checks, the user can record a bounded verification note to accept the result. This changes the phase to `accepted` with `verificationStatus: user_attested`; it does not claim that WTAgent independently verified the note. The UI and event log preserve that distinction. The next verification-engine milestone should:
 
 1. Persist explicit acceptance criteria in a structured form.
 2. Observe tool execution results from the runtime, not model prose.

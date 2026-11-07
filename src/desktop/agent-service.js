@@ -23,6 +23,7 @@ import { resolveLimits } from "../shared/limits.js";
 import { extractAtMentions } from "../cli/at-files.js";
 import { assertNativeRuntimeSupported } from "../platform/windows-diagnostics.js";
 import {
+  acceptAutonomousVerification,
   approveAutonomousWorkflow,
   buildApprovedImplementationInstruction,
   buildAutonomousPlanningInstruction,
@@ -260,7 +261,7 @@ export class DesktopAgentService {
     if (this.autonomousWorkflow?.phase === "awaiting_approval" && !text) {
       return { sessionId: session.sessionId, awaitingApproval: true, autonomousWorkflow: this.autonomousWorkflow };
     }
-    if (["rejected", "completed", "verification_required", "plan_failed"].includes(this.autonomousWorkflow?.phase) && !text && !pendingRecovery) {
+    if (["rejected", "completed", "accepted", "verification_required", "plan_failed"].includes(this.autonomousWorkflow?.phase) && !text && !pendingRecovery) {
       return { sessionId: session.sessionId, autonomousWorkflow: this.autonomousWorkflow };
     }
 
@@ -512,6 +513,31 @@ export class DesktopAgentService {
     } finally {
       this.autonomousDecisionInProgress = false;
     }
+  }
+
+  async acceptAutonomousVerification(summary) {
+    if (!this.session) throw new Error("Tidak ada sesi agent aktif.");
+    if (this.running || this.autonomousDecisionInProgress) {
+      throw new Error("Tunggu agent berhenti sebelum menerima hasil verifikasi.");
+    }
+    const accepted = acceptAutonomousVerification(
+      this.session.state.autonomousWorkflow ?? this.autonomousWorkflow,
+      summary,
+    );
+    this.autonomousWorkflow = accepted;
+    await this.session.update({ autonomousWorkflow: accepted });
+    await this.session.appendEvent("autonomous.user_accepted", {
+      acceptedAt: accepted.verificationAcceptedAt,
+      planSha256: accepted.planSha256,
+      verificationSummary: accepted.verificationSummary,
+    });
+    this.#emit("desktop.autonomous_accepted", {
+      acceptedAt: accepted.verificationAcceptedAt,
+      planSha256: accepted.planSha256,
+      verificationSummary: accepted.verificationSummary,
+      verificationStatus: accepted.verificationStatus,
+    });
+    return accepted;
   }
 
   async rollbackWorkspaceCheckpoint() {

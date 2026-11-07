@@ -1,0 +1,12 @@
+undefined
+
+test("user acceptance is wired through the isolated desktop IPC bridge", async () => {
+  const [main, preload, renderer] = await Promise.all([
+    read("desktop/main.cjs"),
+    read("desktop/preload.cjs"),
+    read("desktop/renderer.js"),
+  ]);
+  assert.match(main, /ipcMain\.handle\("agent:accept-verification"/);
+  assert.match(preload, /acceptAutonomousVerification:.*agent:accept-verification/);
+  assert.match(renderer, /Saya sudah memeriksa hasil/);
+});

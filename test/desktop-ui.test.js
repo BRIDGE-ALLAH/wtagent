@@ -73,7 +73,7 @@ test("Git, provider profiles, and persistent terminal are connected end to end",
   for (const channel of [
     "terminal:start", "terminal:write", "terminal:stop",
     "git:status", "git:diff", "git:stage", "git:stage-all", "git:commit", "git:checkout",
-    "provider:profiles", "provider:open-profile", "agent:rollback-workspace",
+    "provider:profiles", "provider:open-profile", "agent:rollback-workspace", "agent:accept-verification",
     "agent:sessions", "agent:resume", "agent:approve-plan", "agent:reject-plan",
   ]) {
     assert.match(main, new RegExp('ipcMain\\.handle\\("' + channel + '"'));
@@ -99,6 +99,8 @@ test("autonomous implementation cannot be reported complete without a verificati
   assert.doesNotMatch(service, /this\.autonomousWorkflow\s*=\s*\{[\s\S]{0,120}phase:\s*"completed"/);
   assert.match(service, /"verification_required"/);
   assert.match(renderer, /desktop\.autonomous_verification_required/);
+  assert.match(renderer, /api\.acceptAutonomousVerification/);
+  assert.match(service, /autonomous\.user_accepted/);
   assert.match(renderer, /belum dinyatakan selesai/);
   assert.match(workflow, /phase: "verification_required"/);
   assert.match(workflow, /completedAt: null/);

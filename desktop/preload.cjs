@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld("wtagent", {
   respondApproval: (requestId, choice) => ipcRenderer.invoke("agent:approval", { requestId, choice }),
   approveAutonomousPlan: () => ipcRenderer.invoke("agent:approve-plan"),
   rejectAutonomousPlan: () => ipcRenderer.invoke("agent:reject-plan"),
+  acceptAutonomousVerification: (summary) => ipcRenderer.invoke("agent:accept-verification", summary),
   rollbackWorkspaceCheckpoint: () => ipcRenderer.invoke("agent:rollback-workspace"),
   continueProviderSelection: () => ipcRenderer.invoke("agent:continue-provider"),
   cancelAgent: () => ipcRenderer.invoke("agent:cancel"),

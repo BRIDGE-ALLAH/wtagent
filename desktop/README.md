@@ -53,7 +53,7 @@ After explicit plan approval, WTAgent snapshots the workspace before implementat
 
 ### Autonomous completion integrity
 
-A completed provider/model turn is not proof that the requested engineering task is correct. After an approved autonomous implementation turn ends, WTAgent persists the workflow as `verification_required`, not `completed`, and displays a verification notice. Resuming that session without a new instruction does not silently restart the model or promote the task to completed. The user must inspect the final diff and run the relevant project checks before treating the work as accepted.
+A completed provider/model turn is not proof that the requested engineering task is correct. After an approved autonomous implementation turn ends, WTAgent persists the workflow as `verification_required`, not `completed`, and displays a verification notice. Resuming that session without a new instruction does not silently restart the model or promote the task to completed. The user must inspect the final diff and run the relevant project checks before treating the work as accepted. The UI then allows a bounded user attestation note; this records `phase: accepted` and `verificationStatus: user_attested`, not a machine-verified pass.
 
 This is an intentional fail-closed boundary, not an automated test verdict. At this stage WTAgent does not yet parse arbitrary project acceptance criteria or independently certify every test command. A later verification engine must collect structured, machine-observed evidence before automatic completion can be enabled.
 

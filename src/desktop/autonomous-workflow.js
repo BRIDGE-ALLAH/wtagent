@@ -93,6 +93,26 @@ export function requireAutonomousVerification(workflow, now = new Date().toISOSt
   };
 }
 
+export function acceptAutonomousVerification(workflow, summary, now = new Date().toISOString()) {
+  if (!workflow || workflow.version !== 1 || workflow.phase !== "verification_required") {
+    throw new Error("Task autonomous belum berada pada fase verifikasi pengguna.");
+  }
+  const verificationSummary = String(summary ?? "").trim();
+  const summaryBytes = Buffer.byteLength(verificationSummary, "utf8");
+  if (summaryBytes < 12 || summaryBytes > 4 * 1024) {
+    throw new Error("Catatan verifikasi wajib berisi 12 byte hingga 4 KB.");
+  }
+  return {
+    ...workflow,
+    phase: "accepted",
+    verificationStatus: "user_attested",
+    verificationAcceptedAt: now,
+    verificationSummary,
+    completedAt: null,
+    lastError: null,
+  };
+}
+
 export function approveAutonomousWorkflow(workflow, now = new Date().toISOString()) {
   assertAutonomousPlanApprovable(workflow);
   return { ...workflow, phase: "implementing", approvedAt: now, completedAt: null, lastError: null };

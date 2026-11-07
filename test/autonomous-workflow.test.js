@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AUTONOMOUS_PLAN_MAX_BYTES,
+  acceptAutonomousVerification,
   approveAutonomousWorkflow,
   assertAutonomousPlanApprovable,
   buildApprovedImplementationInstruction,

@@ -113,6 +113,28 @@ export function acceptAutonomousVerification(workflow, summary, now = new Date()
   };
 }
 
+export function beginAutonomousImplementation(workflow, now = new Date().toISOString()) {
+  assertAutonomousPlanApprovable(workflow);
+  return {
+    ...workflow,
+    phase: "implementing",
+    approvedAt: null,
+    implementationStartedAt: now,
+    completedAt: null,
+    lastError: null,
+  };
+}
+
+export function buildAutonomousImplementationInstruction(workflow) {
+  const prompt = buildApprovedImplementationInstruction(workflow);
+  return prompt
+    .replace("USER APPROVED IMPLEMENTATION", "AUTONOMOUS IMPLEMENTATION")
+    .replace("The user explicitly approved the plan below.", "WTAgent validated the plan and created a workspace checkpoint before implementation.")
+    .replace("Treat the approved plan", "Treat the validated plan")
+    .replace("APPROVED PLAN SHA-256:", "VALIDATED PLAN SHA-256:")
+    .replace("APPROVED PLAN AS JSON STRING:", "VALIDATED PLAN AS JSON STRING:");
+}
+
 export function approveAutonomousWorkflow(workflow, now = new Date().toISOString()) {
   assertAutonomousPlanApprovable(workflow);
   return { ...workflow, phase: "implementing", approvedAt: now, completedAt: null, lastError: null };

@@ -1,4 +1,6 @@
 import test from "node:test";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -7,6 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createDefaultToolRegistry } from "../src/tools/default-tools.js";
 import { ProcessManager } from "../src/tools/process-manager.js";
 import { DEFAULT_LIMITS } from "../src/shared/limits.js";
+import { runProgram } from "../src/tools/terminal-exec.js";
 
 function context(root) {
   return {
@@ -341,4 +344,58 @@ test("fs.search splits comma-separated exclude patterns", async (t) => {
   assert.match(result.data.matches, /src[\\/]a\.js/);
   assert.doesNotMatch(result.data.matches, /vendor/);
   assert.doesNotMatch(result.data.matches, /generated/);
+});
+
+test("runProgram escalates timeout termination and reports unconfirmed exit", async () => {
+  const child = new EventEmitter();
+  child.pid = 9876;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  const signals = [];
+  const result = await runProgram({
+    program: "node",
+    argv: [],
+    cwd: process.cwd(),
+    timeoutMs: 5,
+    maxOutputBytes: 1024,
+    maxLogBytes: 0,
+    stopGraceMs: 5,
+    forceGraceMs: 5,
+    spawnImpl: () => child,
+    resolveLaunchPlanImpl: () => ({ command: "node", args: [], shell: false }),
+    killProcessTreeImpl: async (_pid, signal) => signals.push(signal),
+  });
+  assert.equal(result.timedOut, true);
+  assert.equal(result.completionUnknown, true);
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+});
+
+test("runProgram keeps output bounded by UTF-8 bytes", async () => {
+  const child = new EventEmitter();
+  child.pid = 9877;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  const resultPromise = runProgram({
+    program: "node",
+    argv: [],
+    cwd: process.cwd(),
+    timeoutMs: 1_000,
+    maxOutputBytes: 64,
+    maxLogBytes: 0,
+    spawnImpl: () => {
+      setImmediate(() => {
+        child.stdout.write("🧪".repeat(100));
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 0, null);
+      });
+      return child;
+    },
+    resolveLaunchPlanImpl: () => ({ command: "node", args: [], shell: false }),
+  });
+  const result = await resultPromise;
+  assert.equal(result.ok, true);
+  assert.equal(result.truncated, true);
+  assert.ok(result.includedOutputBytes <= 64);
+  assert.ok(result.stdoutBytes > result.includedOutputBytes);
 });

@@ -115,6 +115,13 @@ async function snapshotVerificationIntegrityFiles(root, manifestSha256) {
     }
   }
 
+  try {
+    const testStat = await fs.lstat(testRoot);
+    if (testStat.isSymbolicLink()) throw new Error("The baseline test directory cannot be a symbolic link.");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+
   async function visit(directory) {
     let entries;
     try {
@@ -167,7 +174,12 @@ export async function resolveAutonomousChecks({ workspace }) {
   let manifestText;
   let manifest;
   try {
-    manifestText = await fs.readFile(path.join(root, "package.json"), "utf8");
+    const manifestPath = path.join(root, "package.json");
+    const realManifestPath = await fs.realpath(manifestPath);
+    if (!isPathInside(root, realManifestPath) || realManifestPath !== manifestPath) {
+      throw new Error("The root package.json must be a regular workspace file, not a symlink.");
+    }
+    manifestText = await fs.readFile(manifestPath, "utf8");
     manifest = JSON.parse(manifestText);
   } catch (error) {
     return {

@@ -252,6 +252,12 @@ export class DesktopAgentService {
       autonomousWorkflow: this.autonomousWorkflow,
       recoveryRequired: pendingRecovery,
     });
+    if (session.state.workspaceCheckpoint?.status === "completed") {
+      this.#emit("desktop.workspace_checkpointed", {
+        checkpointId: session.state.workspaceCheckpoint.id,
+        changedFiles: session.state.workspaceCheckpoint.changedFiles ?? 0,
+      });
+    }
 
     if (this.autonomousWorkflow?.phase === "awaiting_approval" && !text) {
       return { sessionId: session.sessionId, awaitingApproval: true, autonomousWorkflow: this.autonomousWorkflow };

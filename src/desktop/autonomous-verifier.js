@@ -708,9 +708,12 @@ export function mergeAutonomousVerificationResults(previous, rerun) {
     || rerun?.status === "integrity_failed"
     || (previous?.manifestSha256 && rerun?.manifestSha256
       && previous.manifestSha256 !== rerun.manifestSha256);
-  const status = allPassed ? "passed"
-    : integrityFailed ? "integrity_failed"
-      : statuses.includes("timed_out") || previous?.status === "timed_out" || rerun?.status === "timed_out" ? "timed_out"
+  // A prior unknown completion or integrity failure is terminal evidence:
+  // a later targeted run cannot retroactively prove that the earlier side
+  // effect did not occur or that the verification inputs remained unchanged.
+  const status = integrityFailed ? "integrity_failed"
+    : previous?.status === "timed_out" || rerun?.status === "timed_out" || statuses.includes("timed_out") ? "timed_out"
+      : allPassed ? "passed"
         : statuses.includes("unsupported") || previous?.status === "unsupported" || rerun?.status === "unsupported" ? "unsupported"
           : statuses.includes("failed") || previous?.status === "failed" || rerun?.status === "failed" ? "failed"
             : "unavailable";

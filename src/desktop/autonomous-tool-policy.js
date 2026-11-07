@@ -97,6 +97,7 @@ export async function evaluateAutonomousToolPolicy({
   definition,
   projectRoot,
   resolvePath = resolveToolPath,
+  verificationPlan = null,
 }) {
   const name = String(toolCall?.name ?? "");
   if (!definition || definition.name !== name) {

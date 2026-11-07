@@ -9,6 +9,7 @@ import {
   recordAutonomousMachineVerification,
   resolveAutonomousChecks,
   runAutonomousVerification,
+  mergeAutonomousVerificationResults,
 } from "../src/desktop/autonomous-verifier.js";
 import { createAutonomousWorkflow, storeAutonomousPlan, beginAutonomousImplementation } from "../src/desktop/autonomous-workflow.js";
 
@@ -135,4 +136,23 @@ test("machine completion requires every required check to pass with confirmed ex
   });
   assert.equal(blocked.phase, "verification_required");
   assert.equal(blocked.completedAt, null);
+});
+
+test("targeted repair verification merges only rerun results and preserves prior passing checks", () => {
+  const merged = mergeAutonomousVerificationResults(
+    {
+      status: "failed",
+      checks: [
+        { id: "package:test", status: "failed", exitCode: 1, completionKnown: true },
+        { id: "package:check", status: "passed", exitCode: 0, completionKnown: true },
+      ],
+    },
+    {
+      status: "passed",
+      checks: [{ id: "package:test", status: "passed", exitCode: 0, completionKnown: true }],
+      unsupported: [],
+    },
+  );
+  assert.equal(merged.status, "passed");
+  assert.deepEqual(merged.checks.map((check) => check.status), ["passed", "passed"]);
 });

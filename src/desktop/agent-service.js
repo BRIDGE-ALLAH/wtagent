@@ -29,6 +29,7 @@ import {
   createAutonomousWorkflow,
   normalizeWorkflowMode,
   rejectAutonomousWorkflow,
+  requireAutonomousVerification,
   shouldEnforceReadOnlyPolicy,
   storeAutonomousPlan,
 } from "./autonomous-workflow.js";

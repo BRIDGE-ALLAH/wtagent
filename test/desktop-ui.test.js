@@ -87,7 +87,8 @@ test("Git, provider profiles, and persistent terminal are connected end to end",
   assert.match(html, /id="git-panel"/);
 });
 
-\ntest("autonomous implementation cannot be reported complete without a verification gate", async () => {
+
+test("autonomous implementation cannot be reported complete without a verification gate", async () => {
   const [service, renderer, workflow] = await Promise.all([
     read("src/desktop/agent-service.js"),
     read("desktop/renderer.js"),

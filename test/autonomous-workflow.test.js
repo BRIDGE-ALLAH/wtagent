@@ -9,6 +9,7 @@ import {
   createAutonomousWorkflow,
   normalizeWorkflowMode,
   rejectAutonomousWorkflow,
+  requireAutonomousVerification,
   shouldEnforceReadOnlyPolicy,
   storeAutonomousPlan,
 } from "../src/desktop/autonomous-workflow.js";
@@ -83,7 +84,8 @@ test("planning prompt prohibits mutations and command execution", () => {
   assert.match(prompt, /USER REQUEST:/);
 });
 
-\ntest("implementation completion requires a separate verification phase", () => {
+
+test("implementation completion requires a separate verification phase", () => {
   const planned = storeAutonomousPlan(createAutonomousWorkflow("Add a settings page"), "Verified plan");
   const implementing = approveAutonomousWorkflow(planned, "2026-11-07T00:01:00.000Z");
   const pending = requireAutonomousVerification(implementing, "2026-11-07T00:02:00.000Z");

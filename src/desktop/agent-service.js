@@ -41,7 +41,7 @@ import {
 } from "./autonomous-workflow.js";
 import { WorkspaceCheckpoint } from "./workspace-checkpoint.js";
 import { evaluateAutonomousToolPolicy } from "./autonomous-tool-policy.js";
-import { runAutonomousVerification, recordAutonomousMachineVerification, mergeAutonomousVerificationResults } from "./autonomous-verifier.js";
+import { resolveAutonomousChecks, runAutonomousVerification, recordAutonomousMachineVerification, mergeAutonomousVerificationResults } from "./autonomous-verifier.js";
 import { getSessionRecoveryStatus } from "./session-recovery.js";
 
 function emitSafely(callback, event) {

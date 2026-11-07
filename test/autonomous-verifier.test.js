@@ -16,6 +16,8 @@ import { createAutonomousWorkflow, storeAutonomousPlan, beginAutonomousImplement
 async function fixture(t, scripts = { test: "node scripts/run-tests.js", check: "node scripts/check-syntax.js" }) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "wtagent-verifier-"));
   await fs.mkdir(path.join(root, "scripts"));
+  await fs.mkdir(path.join(root, "test"));
+  await fs.writeFile(path.join(root, "test", "baseline.test.js"), "test(\\\"baseline\\\", () => {});");
   await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ scripts }));
   await fs.writeFile(path.join(root, "scripts", "run-tests.js"), "process.exit(0);");
   await fs.writeFile(path.join(root, "scripts", "check-syntax.js"), "process.exit(0);");
@@ -39,6 +41,8 @@ test("resolver discovers only literal workspace-relative Node test and check scr
   assert.ok(resolved.checks.every((item) => item.executable === process.execPath));
   assert.ok(resolved.checks.every((item) => item.cwd === root));
   assert.ok(resolved.checks.every((item) => item.args.length === 1));
+  assert.ok(resolved.checks.every((item) => typeof item.scriptSha256 === "string"));
+  assert.ok(resolved.integrityFiles.some((item) => item.path === path.join("test", "baseline.test.js")));
 });
 
 test("resolver rejects shell commands, chains, traversal, and external scripts", async (t) => {
@@ -174,4 +178,53 @@ test("targeted verifier runs only the requested failed check", async (t) => {
   assert.equal(result.checks.length, 1);
   assert.equal(result.checks[0].id, "package:test");
   assert.equal(launched.length, 1);
+});
+
+test("trusted verification rejects baseline test tampering before executing checks", async (t) => {
+  const root = await fixture(t, { test: "node scripts/run-tests.js" });
+  const plan = await resolveAutonomousChecks({ workspace: root });
+  await fs.writeFile(path.join(root, "test", "baseline.test.js"), "process.exit(0);");
+  let spawned = false;
+  const result = await runAutonomousVerification({
+    workspace: root,
+    verificationPlan: plan,
+    requireTrustedPlan: true,
+    spawnImpl: () => { spawned = true; return fakeChild(); },
+  });
+  assert.equal(result.status, "integrity_failed");
+  assert.equal(spawned, false);
+  assert.match(result.reason, /changed after planning/);
+});
+
+test("trusted verification uses frozen script descriptors when package.json scripts change", async (t) => {
+  const root = await fixture(t, { test: "node scripts/run-tests.js" });
+  const plan = await resolveAutonomousChecks({ workspace: root });
+  await fs.writeFile(path.join(root, "package.json"), JSON.stringify({
+    scripts: { test: "node scripts/skip-tests.js" },
+  }));
+  let launchedPath = null;
+  const result = await runAutonomousVerification({
+    workspace: root,
+    verificationPlan: plan,
+    requireTrustedPlan: true,
+    spawnImpl: (_program, args) => {
+      launchedPath = args[0];
+      const child = fakeChild();
+      setImmediate(() => child.emit("close", 0, null));
+      return child;
+    },
+  });
+  assert.equal(result.status, "passed");
+  assert.equal(launchedPath, path.join(root, "scripts", "run-tests.js"));
+});
+
+test("autonomous service cannot verify from a post-implementation manifest alone", async (t) => {
+  const root = await fixture(t, { test: "node scripts/run-tests.js" });
+  const result = await runAutonomousVerification({
+    workspace: root,
+    requireTrustedPlan: true,
+    spawnImpl: () => { throw new Error("must not spawn without a trusted plan"); },
+  });
+  assert.equal(result.status, "unavailable");
+  assert.match(result.reason, /captured before implementation/);
 });

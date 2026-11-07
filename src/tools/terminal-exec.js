@@ -73,6 +73,15 @@ class StreamCapture {
   }
 }
 
+async function requestProcessKill(killProcessTreeImpl, pid, signal) {
+  let timer;
+  await Promise.race([
+    Promise.resolve().then(() => killProcessTreeImpl(pid, signal)).catch(() => undefined),
+    new Promise((resolve) => { timer = setTimeout(resolve, 500); }),
+  ]);
+  clearTimeout(timer);
+}
+
 function allocateOutputBudgets({ stdoutBytes, stderrBytes, maxBytes, preferStderr }) {
   if (stdoutBytes + stderrBytes <= maxBytes) {
     return { stdout: stdoutBytes, stderr: stderrBytes };
@@ -231,11 +240,11 @@ export async function runProgram({
 
     const timer = setTimeout(async () => {
       timedOut = true;
-      await Promise.resolve().then(() => killProcessTreeImpl(child.pid, "SIGTERM")).catch(() => undefined);
+      await requestProcessKill(killProcessTreeImpl, child.pid, "SIGTERM");
       if (settled) return;
 
       terminationGuard = setTimeout(async () => {
-        await Promise.resolve().then(() => killProcessTreeImpl(child.pid, "SIGKILL")).catch(() => undefined);
+        await requestProcessKill(killProcessTreeImpl, child.pid, "SIGKILL");
         if (settled) return;
         terminationGuard = setTimeout(() => {
           void finish({

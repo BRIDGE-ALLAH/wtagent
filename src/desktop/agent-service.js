@@ -96,8 +96,6 @@ export class DesktopAgentService {
           const planned = storeAutonomousPlan(this.autonomousWorkflow, payload.message);
           const verificationPlan = await resolveAutonomousChecks({
             workspace: this.session.state.projectRoot,
-            verificationPlan: this.autonomousVerificationPlan ?? this.session.state.autonomousVerificationPlan ?? null,
-            requireTrustedPlan: true,
           });
           const appDataDir = path.resolve(getAppDataDir());
           const checkpoint = await WorkspaceCheckpoint.create({
@@ -148,6 +146,8 @@ export class DesktopAgentService {
         try {
           verification = await runAutonomousVerification({
             workspace: this.session.state.projectRoot,
+            verificationPlan: this.autonomousVerificationPlan ?? this.session.state.autonomousVerificationPlan ?? null,
+            requireTrustedPlan: true,
           });
         } catch (error) {
           verification = {

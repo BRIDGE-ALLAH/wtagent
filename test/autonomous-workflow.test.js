@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { recordAutonomousMachineVerification } from "../src/desktop/autonomous-verifier.js";
 import {
   AUTONOMOUS_PLAN_MAX_BYTES,
   acceptAutonomousVerification,
   approveAutonomousWorkflow,
   assertAutonomousPlanApprovable,
   buildApprovedImplementationInstruction,
+  beginAutonomousImplementation,
+  buildAutonomousImplementationInstruction,
+  buildAutonomousRepairInstruction,
+  recordAutonomousVerificationAttempt,
+  getRepairableCheckIds,
   buildAutonomousPlanningInstruction,
   createAutonomousWorkflow,
   normalizeWorkflowMode,
@@ -110,4 +116,75 @@ test("user acceptance is explicit, bounded, and distinct from machine verificati
   assert.equal(accepted.completedAt, null);
   assert.equal(accepted.verificationSummary, "npm test: 42 passed; reviewed final diff.");
   assert.throws(() => acceptAutonomousVerification(accepted, "Already accepted"), /fase verifikasi pengguna/);
+});
+
+test("autonomous plan can advance to implementation without claiming user approval", () => {
+  const planned = storeAutonomousPlan(createAutonomousWorkflow("Add a settings page"), "Verified plan");
+  const started = beginAutonomousImplementation(planned, "2026-11-07T00:01:00.000Z");
+  assert.equal(started.phase, "implementing");
+  assert.equal(started.approvedAt, null);
+  assert.equal(started.implementationStartedAt, "2026-11-07T00:01:00.000Z");
+  assert.throws(() => beginAutonomousImplementation(started), /Rencana tidak valid/);
+  const instruction = buildAutonomousImplementationInstruction(planned);
+  assert.match(instruction, /AUTONOMOUS IMPLEMENTATION/);
+  assert.doesNotMatch(instruction, /user explicitly approved/i);
+  assert.match(instruction, /Never push, publish, release, deploy/);
+});
+
+test("autonomous repair prompt is scoped and hard-limited to two attempts", () => {
+  const planned = storeAutonomousPlan(createAutonomousWorkflow("Fix parser"), "Plan");
+  const implementing = beginAutonomousImplementation(planned);
+  const failed = [{ id: "package:test", status: "failed", exitCode: 1, completionKnown: true, stderr: "assertion failed" }];
+  const prompt = buildAutonomousRepairInstruction(implementing, failed, 1);
+  assert.match(prompt, /ATTEMPT 1 OF 2/);
+  assert.match(prompt, /untrusted data/);
+  assert.match(prompt, /Do not run shell commands/);
+  assert.throws(() => buildAutonomousRepairInstruction(implementing, failed, 3), /attempt budget/);
+});
+
+test("verification attempts are persisted as bounded machine summaries", () => {
+  const planned = storeAutonomousPlan(createAutonomousWorkflow("Fix parser"), "Plan");
+  const implementing = beginAutonomousImplementation(planned);
+  const recorded = recordAutonomousVerificationAttempt(implementing, {
+    status: "failed",
+    startedAt: "2026-11-07T00:00:00.000Z",
+    finishedAt: "2026-11-07T00:00:01.000Z",
+    durationMs: 1000,
+    checks: [{ id: "package:test", status: "failed", exitCode: 1, completionKnown: true, stdout: "x".repeat(100) }],
+  });
+  assert.equal(recorded.verificationAttempts.length, 1);
+  assert.equal(recorded.verificationAttempts[0].checks[0].exitCode, 1);
+  assert.equal(recorded.machineVerification.checks[0].stdout.length, 100);
+});
+
+test("unattended policy denial prevents machine completion", () => {
+  const planned = storeAutonomousPlan(createAutonomousWorkflow("Implement safely"), "Plan");
+  const implementing = beginAutonomousImplementation(planned);
+  const blocked = recordAutonomousMachineVerification({
+    ...implementing,
+    repairBlockedReason: "AUTONOMOUS_TOOL_NOT_ALLOWED: terminal.exec is denied",
+  }, {
+    status: "passed",
+    checks: [{ id: "package:test", status: "passed", exitCode: 0, completionKnown: true }],
+  });
+  assert.equal(blocked.phase, "verification_required");
+  assert.equal(blocked.verificationStatus, "policy_denied");
+  assert.equal(blocked.completedAt, null);
+});
+
+test("repair eligibility requires confirmed pass/fail exit evidence for every check", () => {
+  assert.deepEqual(getRepairableCheckIds({
+    status: "failed",
+    checks: [
+      { id: "package:test", status: "failed", exitCode: 1, completionKnown: true },
+      { id: "package:check", status: "passed", exitCode: 0, completionKnown: true },
+    ],
+  }), ["package:test"]);
+  for (const check of [
+    { id: "package:test", status: "timed_out", exitCode: null, completionKnown: false },
+    { id: "package:test", status: "spawn_error", exitCode: null, completionKnown: true },
+    { id: "package:test", status: "failed", exitCode: 1, completionKnown: false },
+  ]) {
+    assert.deepEqual(getRepairableCheckIds({ status: "failed", checks: [check] }), []);
+  }
 });

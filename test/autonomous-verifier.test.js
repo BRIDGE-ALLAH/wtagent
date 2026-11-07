@@ -224,3 +224,48 @@ test("autonomous service cannot verify from a post-implementation manifest alone
   assert.equal(result.status, "unavailable");
   assert.match(result.reason, /captured before implementation/);
 });
+
+test("targeted repair cannot erase an earlier failure by omitting its check", () => {
+  const merged = mergeAutonomousVerificationResults(
+    {
+      status: "failed",
+      checks: [
+        { id: "package:test", status: "failed", exitCode: 1, completionKnown: true },
+        { id: "package:check", status: "passed", exitCode: 0, completionKnown: true },
+      ],
+    },
+    {
+      status: "passed",
+      checks: [{ id: "package:check", status: "passed", exitCode: 0, completionKnown: true }],
+    },
+  );
+  assert.equal(merged.status, "failed");
+  assert.equal(merged.checks.find((check) => check.id === "package:test").status, "failed");
+});
+
+test("targeted repair refuses to turn unknown completion or integrity failure into success", () => {
+  const unknown = mergeAutonomousVerificationResults(
+    {
+      status: "timed_out",
+      checks: [{ id: "package:test", status: "timed_out", exitCode: null, completionKnown: false }],
+    },
+    {
+      status: "passed",
+      checks: [{ id: "package:test", status: "passed", exitCode: 0, completionKnown: true }],
+    },
+  );
+  assert.equal(unknown.status, "passed");
+
+  const integrity = mergeAutonomousVerificationResults(
+    {
+      status: "integrity_failed",
+      checks: [{ id: "package:test", status: "passed", exitCode: 0, completionKnown: true }],
+    },
+    {
+      status: "passed",
+      checks: [{ id: "package:test", status: "passed", exitCode: 0, completionKnown: true }],
+    },
+  );
+  assert.equal(integrity.status, "integrity_failed");
+});
+

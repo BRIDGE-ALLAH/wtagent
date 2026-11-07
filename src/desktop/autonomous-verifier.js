@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -69,11 +70,13 @@ async function resolveNodeScript(root, id, script, timeoutMs) {
     if (!stat.isFile()) {
       return { error: unsupported(`package:${id}`, "The script path is not a regular file.") };
     }
+    const scriptBytes = await fs.readFile(realScript);
     return {
       check: {
         id: `package:${id}`,
         manifestPath: "package.json",
         script: relativeScript,
+        scriptSha256: createHash("sha256").update(scriptBytes).digest("hex"),
         executable: process.execPath,
         args: [realScript],
         cwd: root,
@@ -85,6 +88,50 @@ async function resolveNodeScript(root, id, script, timeoutMs) {
   }
 }
 
+async function snapshotBaselineTestFiles(root) {
+  const testRoot = path.join(root, "test");
+  const files = [];
+  let totalBytes = 0;
+  const maxFiles = 2_000;
+  const maxFileBytes = 5 * 1024 * 1024;
+  const maxTotalBytes = 64 * 1024 * 1024;
+
+  async function visit(directory) {
+    let entries;
+    try {
+      entries = await fs.readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (error.code === "ENOENT" && directory === testRoot) return;
+      throw error;
+    }
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Baseline test tree contains a symbolic link: ${path.relative(root, fullPath)}`);
+      }
+      if (entry.isDirectory()) {
+        await visit(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const stat = await fs.stat(fullPath);
+      if (stat.size > maxFileBytes || totalBytes + stat.size > maxTotalBytes || files.length >= maxFiles) {
+        throw new Error("Baseline test tree exceeds the verification integrity snapshot budget.");
+      }
+      const bytes = await fs.readFile(fullPath);
+      totalBytes += bytes.length;
+      files.push({
+        path: path.relative(root, fullPath),
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      });
+    }
+  }
+
+  await visit(testRoot);
+  return files;
+}
+
 export async function resolveAutonomousChecks({ workspace }) {
   let root;
   try {
@@ -92,24 +139,37 @@ export async function resolveAutonomousChecks({ workspace }) {
     const stat = await fs.stat(root);
     if (!stat.isDirectory()) throw new Error("Workspace is not a directory.");
   } catch (error) {
-    return { status: "unavailable", checks: [], unsupported: [], reason: error.message };
+    return {
+      status: "unavailable", workspaceRoot: null, manifestSha256: null,
+      checks: [], unsupported: [], integrityFiles: [], reason: error.message,
+    };
   }
 
+  let manifestText;
   let manifest;
   try {
-    manifest = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
+    manifestText = await fs.readFile(path.join(root, "package.json"), "utf8");
+    manifest = JSON.parse(manifestText);
   } catch (error) {
     return {
       status: "unavailable",
+      workspaceRoot: root,
+      manifestSha256: null,
       checks: [],
       unsupported: [],
+      integrityFiles: [],
       reason: error.code === "ENOENT" ? "No root package.json manifest was found." : `package.json could not be parsed: ${error.message}`,
     };
   }
 
+  const manifestSha256 = createHash("sha256").update(manifestText).digest("hex");
   const scripts = manifest?.scripts;
   if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) {
-    return { status: "unavailable", checks: [], unsupported: [], reason: "The root package.json has no scripts object." };
+    return {
+      status: "unavailable", workspaceRoot: root, manifestSha256,
+      checks: [], unsupported: [], integrityFiles: [],
+      reason: "The root package.json has no scripts object.",
+    };
   }
 
   const checks = [];
@@ -123,15 +183,101 @@ export async function resolveAutonomousChecks({ workspace }) {
     else rejected.push(result.error);
   }
 
+  let integrityFiles = [];
+  try {
+    integrityFiles = await snapshotBaselineTestFiles(root);
+    for (const check of checks) {
+      integrityFiles.push({
+        path: path.relative(root, check.args[0]),
+        sha256: check.scriptSha256,
+      });
+    }
+    integrityFiles = [...new Map(integrityFiles.map((item) => [item.path, item])).values()];
+  } catch (error) {
+    rejected.push(unsupported("verification:baseline-integrity", error.message));
+  }
+
   if (discovered === 0) {
-    return { status: "unavailable", checks: [], unsupported: [], reason: "No supported verification scripts (test/check) were declared in package.json." };
+    return {
+      status: rejected.length ? "unsupported" : "unavailable",
+      workspaceRoot: root,
+      manifestSha256,
+      checks: [],
+      unsupported: rejected,
+      integrityFiles,
+      reason: rejected.length ? "The baseline verification files could not be trusted." : "No supported verification scripts (test/check) were declared in package.json.",
+    };
   }
   return {
     status: rejected.length ? "unsupported" : "ready",
+    workspaceRoot: root,
+    manifestSha256,
     checks,
     unsupported: rejected,
-    reason: rejected.length ? "One or more required package scripts use an unsupported execution form." : null,
+    integrityFiles,
+    reason: rejected.length ? "One or more required package scripts or baseline test files are unsupported or untrusted." : null,
   };
+}
+
+async function verifyAutonomousVerificationPlan(workspaceRoot, plan) {
+  if (!plan || plan.workspaceRoot !== workspaceRoot || !Array.isArray(plan.checks) || !Array.isArray(plan.integrityFiles)) {
+    return "A trusted verification plan captured before implementation is missing or invalid.";
+  }
+  for (const item of plan.integrityFiles) {
+    if (!item || typeof item.path !== "string" || typeof item.sha256 !== "string") {
+      return "The persisted verification integrity manifest is malformed.";
+    }
+    const candidate = path.resolve(workspaceRoot, item.path);
+    if (!isPathInside(workspaceRoot, candidate)) {
+      return `A baseline verification file escapes the workspace: ${item.path}`;
+    }
+    try {
+      const realPath = await fs.realpath(candidate);
+      if (!isPathInside(workspaceRoot, realPath)) {
+        return `A baseline verification file resolves outside the workspace: ${item.path}`;
+      }
+      const bytes = await fs.readFile(realPath);
+      const actual = createHash("sha256").update(bytes).digest("hex");
+      if (actual !== item.sha256) {
+        return `A baseline verification file changed after planning: ${item.path}`;
+      }
+    } catch (error) {
+      return `A baseline verification file is unavailable: ${item.path} (${error.message})`;
+    }
+  }
+  for (const check of plan.checks) {
+    if (
+      !check
+      || !["package:test", "package:check"].includes(check.id)
+      || check.executable !== process.execPath
+      || check.cwd !== workspaceRoot
+      || !Array.isArray(check.args)
+      || check.args.length !== 1
+      || typeof check.scriptSha256 !== "string"
+      || !Number.isInteger(check.timeoutMs)
+      || check.timeoutMs < 1
+      || check.timeoutMs > DEFAULT_TOTAL_BUDGET_MS
+    ) {
+      return "A persisted verification command descriptor is invalid.";
+    }
+    const scriptPath = path.resolve(check.args[0]);
+    if (!isPathInside(workspaceRoot, scriptPath)) {
+      return `A verification script escapes the workspace: ${check.id}`;
+    }
+    try {
+      const realPath = await fs.realpath(scriptPath);
+      if (!isPathInside(workspaceRoot, realPath) || realPath !== scriptPath) {
+        return `A verification script path changed or escaped the workspace: ${check.id}`;
+      }
+      const bytes = await fs.readFile(realPath);
+      if (createHash("sha256").update(bytes).digest("hex") !== check.scriptSha256) {
+        return `A verification script changed after planning: ${check.id}`;
+      }
+    } catch (error) {
+      return `A verification script is unavailable: ${check.id} (${error.message})`;
+    }
+  }
+  return null;
 }
 
 function waitForClose(record, timeoutMs) {

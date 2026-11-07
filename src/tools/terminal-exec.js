@@ -245,10 +245,7 @@ export async function runProgram({
             completionUnknown: true,
           });
         }, forceGraceMs);
-        terminationGuard.unref?.();
-      }, stopGraceMs);
-      terminationGuard.unref?.();
+        }, stopGraceMs);
     }, timeoutMs);
-    timer.unref?.();
   });
 }

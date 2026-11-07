@@ -71,6 +71,7 @@ export class ProcessManager {
     maxDetectedUrls = DEFAULT_MAX_DETECTED_URLS,
     stopGraceMs = DEFAULT_STOP_GRACE_MS,
     forceStopGraceMs = DEFAULT_FORCE_STOP_GRACE_MS,
+    killRequestTimeoutMs = 500,
   } = {}) {
     this.spawnImpl = spawnImpl;
     this.platform = platform;
@@ -80,6 +81,7 @@ export class ProcessManager {
     this.maxDetectedUrls = maxDetectedUrls;
     this.stopGraceMs = stopGraceMs;
     this.forceStopGraceMs = forceStopGraceMs;
+    this.killRequestTimeoutMs = killRequestTimeoutMs;
   }
 
   #pruneClosedRecords() {
@@ -191,20 +193,29 @@ export class ProcessManager {
     ));
   }
 
+  async #requestKill(record, signal) {
+    let timer;
+    const result = await Promise.race([
+      Promise.resolve()
+        .then(() => this.killProcessTreeImpl(record.child.pid, signal))
+        .then(() => ({ ok: true }), (error) => ({ error })),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve({ timedOut: true }), this.killRequestTimeoutMs);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (result.error) record.stopError = result.error;
+    if (result.timedOut) {
+      record.stopError = new Error(`Process-tree ${signal} request did not settle within its bounded deadline.`);
+    }
+  }
+
   async #terminate(record) {
     if (record.closed) return;
-    try {
-      await this.killProcessTreeImpl(record.child.pid, "SIGTERM");
-    } catch (error) {
-      record.stopError = error;
-    }
+    await this.#requestKill(record, "SIGTERM");
     if (await waitForClose(record, this.stopGraceMs)) return;
 
-    try {
-      await this.killProcessTreeImpl(record.child.pid, "SIGKILL");
-    } catch (error) {
-      record.stopError = error;
-    }
+    await this.#requestKill(record, "SIGKILL");
     if (await waitForClose(record, this.forceStopGraceMs)) return;
 
     record.status = "completion_unknown";

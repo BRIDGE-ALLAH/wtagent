@@ -24,7 +24,7 @@ function persistenceMutexPorts(directory) {
     const digest = createHash("sha256")
       .update(`${resolved}\0state-lock\0${index}`)
       .digest();
-    ports.add(41_000 + (digest.readUInt16BE(0) % 20_000));
+    ports.add(20_000 + (digest.readUInt16BE(0) % 12_000));
   }
   return [...ports];
 }

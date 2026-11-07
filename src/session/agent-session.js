@@ -89,7 +89,10 @@ function persistenceLockMutexPorts(directory) {
     const digest = createHash("sha256")
       .update(`${resolved}\0state-lock\0${index}`)
       .digest();
-    ports.add(41_000 + (digest.readUInt16BE(0) % 20_000));
+    // Stay below the default dynamic/excluded TCP port ranges used by
+    // Windows. Ports in those ranges can fail to bind with EACCES even when
+    // no WTAgent process owns them, making session persistence flaky.
+    ports.add(20_000 + (digest.readUInt16BE(0) % 12_000));
   }
   return [...ports];
 }

@@ -35,7 +35,9 @@ function boundedPlan(value) {
     if (Buffer.byteLength(plan.slice(0, middle), "utf8") <= availableBytes) low = middle;
     else high = middle - 1;
   }
-  return plan.slice(0, low).trimEnd() + suffix;
+  let prefix = plan.slice(0, low);
+  if (/[\\uD800-\\uDBFF]$/.test(prefix)) prefix = prefix.slice(0, -1);
+  return prefix.trimEnd() + suffix;
 }
 
 function hashPlan(plan) {

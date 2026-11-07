@@ -53,7 +53,17 @@ test("truncates by UTF-8 byte size without splitting Unicode characters", () => 
   const planned = storeAutonomousPlan(createAutonomousWorkflow("Large project"), "🧪".repeat(AUTONOMOUS_PLAN_MAX_BYTES));
   assert.ok(Buffer.byteLength(planned.plan, "utf8") <= AUTONOMOUS_PLAN_MAX_BYTES);
   assert.match(planned.plan, /Plan dipotong/);
-  assert.doesNotMatch(planned.plan, /�/);
+  for (let index = 0; index < planned.plan.length; index += 1) {
+    const code = planned.plan.charCodeAt(index);
+    if (code >= 0xD800 && code <= 0xDBFF) {
+      assert.ok(index + 1 < planned.plan.length);
+      const next = planned.plan.charCodeAt(index + 1);
+      assert.ok(next >= 0xDC00 && next <= 0xDFFF, "high surrogate must be paired");
+      index += 1;
+    } else {
+      assert.ok(code < 0xDC00 || code > 0xDFFF, "low surrogate must be paired");
+    }
+  }
 });
 
 test("approved implementation prompt carries the user task and approved plan as data", () => {

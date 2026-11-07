@@ -57,6 +57,7 @@ export class DesktopAgentService {
     this.providerSelectionDone = false;
     this.workflowMode = "agent";
     this.autonomousWorkflow = null;
+    this.autonomousDecisionInProgress = false;
     this.running = false;
     this.closed = false;
   }
@@ -413,7 +414,7 @@ export class DesktopAgentService {
 
   async send(instruction, workflowMode = "agent") {
     if (!this.session) throw new Error("Mulai agent terlebih dahulu.");
-    if (this.running) throw new Error("Agent masih memproses tugas sebelumnya.");
+    if (this.running || this.autonomousDecisionInProgress) throw new Error("Agent sedang memproses tugas sebelumnya.");
     const text = String(instruction ?? "").trim();
     if (!text) throw new Error("Instruksi tidak boleh kosong.");
     if (this.session.state.autonomousWorkflow?.phase === "awaiting_approval") {
@@ -443,31 +444,41 @@ export class DesktopAgentService {
 
   async approveAutonomousPlan() {
     if (!this.session) throw new Error("Tidak ada sesi agent aktif.");
-    if (this.running) throw new Error("Agent masih memproses tugas.");
-    const approved = approveAutonomousWorkflow(this.session.state.autonomousWorkflow ?? this.autonomousWorkflow);
-    this.workflowMode = "autonomous";
-    this.autonomousWorkflow = approved;
-    await this.session.update({ desktopWorkflowMode: "autonomous", autonomousWorkflow: approved });
-    const instruction = buildApprovedImplementationInstruction(approved);
-    await this.session.appendInstruction(instruction);
-    this.#emit("desktop.plan_approved", { approvedAt: approved.approvedAt, planSha256: approved.planSha256 });
-    return await this.#runTurn({
-      resume: true,
-      instruction,
-      displayInstruction: "Implementasi dimulai untuk rencana yang telah disetujui: " + approved.task,
-      files: [],
-    });
+    if (this.running || this.autonomousDecisionInProgress) throw new Error("Agent sedang memproses tugas.");
+    this.autonomousDecisionInProgress = true;
+    try {
+      const approved = approveAutonomousWorkflow(this.session.state.autonomousWorkflow ?? this.autonomousWorkflow);
+      this.workflowMode = "autonomous";
+      this.autonomousWorkflow = approved;
+      await this.session.update({ desktopWorkflowMode: "autonomous", autonomousWorkflow: approved });
+      const instruction = buildApprovedImplementationInstruction(approved);
+      await this.session.appendInstruction(instruction);
+      this.#emit("desktop.plan_approved", { approvedAt: approved.approvedAt, planSha256: approved.planSha256 });
+      return await this.#runTurn({
+        resume: true,
+        instruction,
+        displayInstruction: "Implementasi dimulai untuk rencana yang telah disetujui: " + approved.task,
+        files: [],
+      });
+    } finally {
+      this.autonomousDecisionInProgress = false;
+    }
   }
 
   async rejectAutonomousPlan() {
     if (!this.session) throw new Error("Tidak ada sesi agent aktif.");
-    if (this.running) throw new Error("Agent masih memproses tugas.");
-    const rejected = rejectAutonomousWorkflow(this.session.state.autonomousWorkflow ?? this.autonomousWorkflow);
-    this.workflowMode = "autonomous";
-    this.autonomousWorkflow = rejected;
-    await this.session.update({ desktopWorkflowMode: "autonomous", autonomousWorkflow: rejected });
-    this.#emit("desktop.plan_rejected", { rejectedAt: rejected.rejectedAt, planSha256: rejected.planSha256 });
-    return true;
+    if (this.running || this.autonomousDecisionInProgress) throw new Error("Agent sedang memproses tugas.");
+    this.autonomousDecisionInProgress = true;
+    try {
+      const rejected = rejectAutonomousWorkflow(this.session.state.autonomousWorkflow ?? this.autonomousWorkflow);
+      this.workflowMode = "autonomous";
+      this.autonomousWorkflow = rejected;
+      await this.session.update({ desktopWorkflowMode: "autonomous", autonomousWorkflow: rejected });
+      this.#emit("desktop.plan_rejected", { rejectedAt: rejected.rejectedAt, planSha256: rejected.planSha256 });
+      return true;
+    } finally {
+      this.autonomousDecisionInProgress = false;
+    }
   }
 
 

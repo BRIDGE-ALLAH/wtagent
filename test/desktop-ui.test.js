@@ -113,3 +113,15 @@ test("pending verification cannot be bypassed by sending a new autonomous task",
   assert.match(service, /autonomousWorkflow\?\.phase === "verification_required" && text/);
   assert.match(service, /Periksa dan terima hasil autonomous yang tertunda/);
 });
+
+
+test("user acceptance is wired through the isolated desktop IPC bridge", async () => {
+  const [main, preload, renderer] = await Promise.all([
+    read("desktop/main.cjs"),
+    read("desktop/preload.cjs"),
+    read("desktop/renderer.js"),
+  ]);
+  assert.match(main, /ipcMain\.handle\("agent:accept-verification"/);
+  assert.match(preload, /acceptAutonomousVerification:.*agent:accept-verification/);
+  assert.match(renderer, /Saya sudah memeriksa hasil/);
+});

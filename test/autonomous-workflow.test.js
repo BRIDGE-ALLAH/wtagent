@@ -97,3 +97,17 @@ test("implementation completion requires a separate verification phase", () => {
   assert.throws(() => requireAutonomousVerification(pending), /tidak berada pada fase/);
   assert.throws(() => requireAutonomousVerification({ ...implementing, phase: "completed" }), /tidak berada pada fase/);
 });
+
+
+test("user acceptance is explicit, bounded, and distinct from machine verification", () => {
+  const planned = storeAutonomousPlan(createAutonomousWorkflow("Add a settings page"), "Verified plan");
+  const implementing = approveAutonomousWorkflow(planned);
+  const pending = requireAutonomousVerification(implementing);
+  assert.throws(() => acceptAutonomousVerification(pending, ""), /12 byte hingga 4 KB/);
+  const accepted = acceptAutonomousVerification(pending, "npm test: 42 passed; reviewed final diff.");
+  assert.equal(accepted.phase, "accepted");
+  assert.equal(accepted.verificationStatus, "user_attested");
+  assert.equal(accepted.completedAt, null);
+  assert.equal(accepted.verificationSummary, "npm test: 42 passed; reviewed final diff.");
+  assert.throws(() => acceptAutonomousVerification(accepted, "Already accepted"), /fase verifikasi pengguna/);
+});

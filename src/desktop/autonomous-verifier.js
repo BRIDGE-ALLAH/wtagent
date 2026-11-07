@@ -311,7 +311,7 @@ export async function runAutonomousVerification({
       status: resolved.status === "unsupported" ? "unsupported" : "unavailable",
       startedAt: new Date().toISOString(),
       finishedAt: new Date().toISOString(),
-      checks: resolved.unsupported,
+      checks: [],
       unsupported: resolved.unsupported,
       reason: resolved.reason,
     };

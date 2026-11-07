@@ -22,6 +22,7 @@ export function createAutonomousWorkflow(task) {
     repairAttempts: 0,
     verificationAttempts: [],
     pendingRepairCheckIds: null,
+    repairBlockedReason: null,
   };
 }
 
@@ -112,7 +113,7 @@ export function recordAutonomousVerificationAttempt(workflow, result, now = new 
     machineVerification: {
       status: summary.status,
       durationMs: summary.durationMs,
-      reason: result?.reason ?? null,
+      reason: workflow.repairBlockedReason ?? result?.reason ?? null,
       checks,
     },
     lastVerificationAt: summary.finishedAt,

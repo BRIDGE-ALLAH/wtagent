@@ -38,6 +38,7 @@ import {
 } from "./autonomous-workflow.js";
 import { WorkspaceCheckpoint } from "./workspace-checkpoint.js";
 import { evaluateAutonomousToolPolicy } from "./autonomous-tool-policy.js";
+import { runAutonomousVerification, recordAutonomousMachineVerification } from "./autonomous-verifier.js";
 
 function emitSafely(callback, event) {
   try {
@@ -133,18 +134,50 @@ export class DesktopAgentService {
           this.#emit("desktop.plan_failed", { message: error.message || "Agent belum menghasilkan rencana yang dapat ditinjau." });
         }
       } else if (this.autonomousWorkflow?.phase === "implementing") {
-        this.autonomousWorkflow = requireAutonomousVerification(this.autonomousWorkflow);
+        let verification;
+        try {
+          verification = await runAutonomousVerification({
+            workspace: this.session.state.projectRoot,
+          });
+        } catch (error) {
+          verification = {
+            status: "unavailable",
+            startedAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
+            checks: [],
+            unsupported: [],
+            reason: error.message || "Machine verification could not start.",
+          };
+        }
+        this.autonomousWorkflow = recordAutonomousMachineVerification(this.autonomousWorkflow, verification);
         await this.session.update({ autonomousWorkflow: this.autonomousWorkflow });
-        await this.session.appendEvent("autonomous.verification_required", {
-          implementationCompletedAt: this.autonomousWorkflow.implementationCompletedAt,
-          planSha256: this.autonomousWorkflow.planSha256,
-          reason: "Model turn completion is not independent evidence that acceptance criteria or tests passed.",
-        });
-        this.#emit("desktop.autonomous_verification_required", {
-          verificationRequiredAt: this.autonomousWorkflow.verificationRequiredAt,
-          planSha256: this.autonomousWorkflow.planSha256,
-          message: "Implementasi selesai, tetapi task belum dinyatakan selesai. Periksa diff dan jalankan verifikasi yang relevan.",
-        });
+        await this.session.appendEvent(
+          this.autonomousWorkflow.phase === "completed"
+            ? "autonomous.machine_verified"
+            : "autonomous.verification_required",
+          {
+            planSha256: this.autonomousWorkflow.planSha256,
+            verificationStatus: this.autonomousWorkflow.verificationStatus,
+            machineVerification: this.autonomousWorkflow.machineVerification,
+            completedAt: this.autonomousWorkflow.completedAt,
+          },
+        );
+        if (this.autonomousWorkflow.phase === "completed") {
+          this.#emit("desktop.autonomous_completed", {
+            planSha256: this.autonomousWorkflow.planSha256,
+            verificationStatus: "machine_verified",
+            checks: this.autonomousWorkflow.machineVerification.checks,
+            message: "Implementasi dan seluruh pemeriksaan otomatis yang didukung berhasil.",
+          });
+        } else if (this.autonomousWorkflow.phase === "verification_required") {
+          this.#emit("desktop.autonomous_verification_required", {
+            verificationRequiredAt: this.autonomousWorkflow.verificationRequiredAt,
+            planSha256: this.autonomousWorkflow.planSha256,
+            verificationStatus: this.autonomousWorkflow.verificationStatus,
+            checks: this.autonomousWorkflow.machineVerification.checks,
+            message: "Implementasi selesai, tetapi verifikasi mesin belum lulus. Task tetap belum selesai.",
+          });
+        }
       }
     }
 

@@ -426,6 +426,7 @@ export function createDefaultToolRegistry({
         .map((pattern) => pattern.trim())
         .filter(Boolean);
       let output;
+      let outputTruncated = false;
       let engine = "rg";
       try {
         const result = await rgSearch({
@@ -437,6 +438,7 @@ export function createDefaultToolRegistry({
           maxResults: args.max_results,
         });
         output = result.stdout;
+        outputTruncated = result.truncated === true;
       } catch (error) {
         if (error.code !== "ENOENT") {
           throw error;
@@ -454,7 +456,7 @@ export function createDefaultToolRegistry({
       return {
         ok: true,
         message: output ? "Search completed." : "No matches.",
-        data: { engine, matches: output },
+        data: { engine, matches: output, truncated: outputTruncated },
       };
     },
   });

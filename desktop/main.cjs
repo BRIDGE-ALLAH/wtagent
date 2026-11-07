@@ -176,6 +176,11 @@ async function runGit(cwd, args, { allowExitCodes = [] } = {}) {
     throw error;
   }
   if (result.error) throw result.error;
+  if (result.truncated) {
+    const error = new Error("Output Git melebihi batas aman; hasil parsial tidak akan diperlakukan sebagai lengkap.");
+    error.code = "GIT_OUTPUT_TRUNCATED";
+    throw error;
+  }
   if (result.exitCode === 0 || allowExitCodes.includes(result.exitCode)) {
     return { stdout: result.stdout, stderr: result.stderr, code: result.exitCode, truncated: result.truncated };
   }

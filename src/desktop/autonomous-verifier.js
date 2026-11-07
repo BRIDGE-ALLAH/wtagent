@@ -668,3 +668,66 @@ export function recordAutonomousMachineVerification(workflow, result, now = new 
     lastError: machineVerified ? null : workflow.repairBlockedReason ?? result?.reason ?? "Machine verification did not pass.",
   };
 }
+
+/**
+ * Merge a targeted repair run into the prior verification evidence.
+ * Checks not selected for repair retain their original result; only matching
+ * check IDs are replaced by the new run. A repair can never erase an earlier
+ * failure by omitting that check from its result.
+ */
+export function mergeAutonomousVerificationResults(previous, rerun) {
+  const previousChecks = Array.isArray(previous?.checks) ? previous.checks : [];
+  const rerunChecks = Array.isArray(rerun?.checks) ? rerun.checks : [];
+  const mergedChecks = new Map(previousChecks.map((check) => [check.id, check]));
+
+  for (const check of rerunChecks) {
+    if (!check || typeof check.id !== "string" || !check.id) {
+      continue;
+    }
+    mergedChecks.set(check.id, check);
+  }
+
+  const checks = [...mergedChecks.values()];
+  const unsupportedById = new Map();
+  for (const item of [
+    ...(Array.isArray(previous?.unsupported) ? previous.unsupported : []),
+    ...(Array.isArray(rerun?.unsupported) ? rerun.unsupported : []),
+  ]) {
+    const key = item?.id ?? JSON.stringify(item);
+    if (!unsupportedById.has(key)) unsupportedById.set(key, item);
+  }
+  const unsupportedChecks = [...unsupportedById.values()];
+  const allPassed = checks.length > 0
+    && checks.every((check) => check.status === "passed"
+      && check.exitCode === 0
+      && check.completionKnown === true)
+    && unsupportedChecks.length === 0;
+
+  const statuses = [...checks, ...unsupportedChecks].map((check) => check?.status);
+  const integrityFailed = previous?.status === "integrity_failed"
+    || rerun?.status === "integrity_failed"
+    || (previous?.manifestSha256 && rerun?.manifestSha256
+      && previous.manifestSha256 !== rerun.manifestSha256);
+  const status = allPassed ? "passed"
+    : integrityFailed ? "integrity_failed"
+      : statuses.includes("timed_out") || previous?.status === "timed_out" || rerun?.status === "timed_out" ? "timed_out"
+        : statuses.includes("unsupported") || previous?.status === "unsupported" || rerun?.status === "unsupported" ? "unsupported"
+          : statuses.includes("failed") || previous?.status === "failed" || rerun?.status === "failed" ? "failed"
+            : "unavailable";
+
+  return {
+    status,
+    startedAt: previous?.startedAt ?? rerun?.startedAt ?? new Date().toISOString(),
+    finishedAt: rerun?.finishedAt ?? previous?.finishedAt ?? new Date().toISOString(),
+    durationMs: (Number.isFinite(previous?.durationMs) ? previous.durationMs : 0)
+      + (Number.isFinite(rerun?.durationMs) ? rerun.durationMs : 0),
+    checks,
+    unsupported: unsupportedChecks,
+    manifestSha256: rerun?.manifestSha256 ?? previous?.manifestSha256 ?? null,
+    baselineIntegrityFileCount: rerun?.baselineIntegrityFileCount
+      ?? previous?.baselineIntegrityFileCount ?? 0,
+    reason: status === "passed" ? null
+      : integrityFailed ? "Verification integrity changed during a targeted repair run."
+        : rerun?.reason ?? previous?.reason ?? "One or more required checks did not produce confirmed successful exit evidence.",
+  };
+}

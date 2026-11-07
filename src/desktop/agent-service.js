@@ -103,20 +103,17 @@ export class DesktopAgentService {
           this.#emit("desktop.plan_failed", { message: error.message || "Agent belum menghasilkan rencana yang dapat ditinjau." });
         }
       } else if (this.autonomousWorkflow?.phase === "implementing") {
-        this.autonomousWorkflow = {
-          ...this.autonomousWorkflow,
-          phase: "completed",
-          completedAt: new Date().toISOString(),
-          lastError: null,
-        };
+        this.autonomousWorkflow = requireAutonomousVerification(this.autonomousWorkflow);
         await this.session.update({ autonomousWorkflow: this.autonomousWorkflow });
-        await this.session.appendEvent("autonomous.completed", {
-          completedAt: this.autonomousWorkflow.completedAt,
+        await this.session.appendEvent("autonomous.verification_required", {
+          implementationCompletedAt: this.autonomousWorkflow.implementationCompletedAt,
           planSha256: this.autonomousWorkflow.planSha256,
+          reason: "Model turn completion is not independent evidence that acceptance criteria or tests passed.",
         });
-        this.#emit("desktop.autonomous_completed", {
-          completedAt: this.autonomousWorkflow.completedAt,
+        this.#emit("desktop.autonomous_verification_required", {
+          verificationRequiredAt: this.autonomousWorkflow.verificationRequiredAt,
           planSha256: this.autonomousWorkflow.planSha256,
+          message: "Implementasi selesai, tetapi task belum dinyatakan selesai. Periksa diff dan jalankan verifikasi yang relevan.",
         });
       }
     }
@@ -262,7 +259,7 @@ export class DesktopAgentService {
     if (this.autonomousWorkflow?.phase === "awaiting_approval" && !text) {
       return { sessionId: session.sessionId, awaitingApproval: true, autonomousWorkflow: this.autonomousWorkflow };
     }
-    if (["rejected", "completed", "plan_failed"].includes(this.autonomousWorkflow?.phase) && !text && !pendingRecovery) {
+    if (["rejected", "completed", "verification_required", "plan_failed"].includes(this.autonomousWorkflow?.phase) && !text && !pendingRecovery) {
       return { sessionId: session.sessionId, autonomousWorkflow: this.autonomousWorkflow };
     }
 

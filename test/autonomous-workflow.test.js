@@ -82,3 +82,15 @@ test("planning prompt prohibits mutations and command execution", () => {
   assert.match(prompt, /Do not create, edit, overwrite, rename, or delete files/);
   assert.match(prompt, /USER REQUEST:/);
 });
+
+\ntest("implementation completion requires a separate verification phase", () => {
+  const planned = storeAutonomousPlan(createAutonomousWorkflow("Add a settings page"), "Verified plan");
+  const implementing = approveAutonomousWorkflow(planned, "2026-11-07T00:01:00.000Z");
+  const pending = requireAutonomousVerification(implementing, "2026-11-07T00:02:00.000Z");
+  assert.equal(pending.phase, "verification_required");
+  assert.equal(pending.verificationStatus, "pending");
+  assert.equal(pending.implementationCompletedAt, "2026-11-07T00:02:00.000Z");
+  assert.equal(pending.completedAt, null);
+  assert.throws(() => requireAutonomousVerification(pending), /tidak berada pada fase/);
+  assert.throws(() => requireAutonomousVerification({ ...implementing, phase: "completed" }), /tidak berada pada fase/);
+});

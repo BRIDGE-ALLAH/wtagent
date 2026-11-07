@@ -86,3 +86,19 @@ test("Git, provider profiles, and persistent terminal are connected end to end",
   assert.match(html, /id="models-modal"/);
   assert.match(html, /id="git-panel"/);
 });
+
+\ntest("autonomous implementation cannot be reported complete without a verification gate", async () => {
+  const [service, renderer, workflow] = await Promise.all([
+    read("src/desktop/agent-service.js"),
+    read("desktop/renderer.js"),
+    read("src/desktop/autonomous-workflow.js"),
+  ]);
+  assert.match(service, /requireAutonomousVerification/);
+  assert.match(service, /autonomous\.verification_required/);
+  assert.doesNotMatch(service, /this\.autonomousWorkflow\s*=\s*\{[\s\S]{0,120}phase:\s*"completed"/);
+  assert.match(service, /"verification_required"/);
+  assert.match(renderer, /desktop\.autonomous_verification_required/);
+  assert.match(renderer, /belum dinyatakan selesai/);
+  assert.match(workflow, /phase: "verification_required"/);
+  assert.match(workflow, /completedAt: null/);
+});

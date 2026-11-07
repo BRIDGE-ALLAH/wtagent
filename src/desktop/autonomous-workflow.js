@@ -78,6 +78,21 @@ export function assertAutonomousPlanApprovable(workflow) {
   return workflow;
 }
 
+export function requireAutonomousVerification(workflow, now = new Date().toISOString()) {
+  if (!workflow || workflow.version !== 1 || workflow.phase !== "implementing") {
+    throw new Error("Implementasi autonomous tidak berada pada fase yang dapat diverifikasi.");
+  }
+  return {
+    ...workflow,
+    phase: "verification_required",
+    implementationCompletedAt: now,
+    verificationRequiredAt: now,
+    verificationStatus: "pending",
+    completedAt: null,
+    lastError: null,
+  };
+}
+
 export function approveAutonomousWorkflow(workflow, now = new Date().toISOString()) {
   assertAutonomousPlanApprovable(workflow);
   return { ...workflow, phase: "implementing", approvedAt: now, completedAt: null, lastError: null };

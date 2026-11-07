@@ -51,6 +51,12 @@ Build output is written to `desktop/dist/`. macOS distribution signing/notarizat
 
 After explicit plan approval, WTAgent snapshots the workspace before implementation (maximum 8,000 regular files / 128 MiB; dependency and generated folders are excluded). After a successful run, a changed-file manifest is finalized and a rollback action appears in chat. Rollback verifies every affected file against the agent output before restoring anything; if any affected file has changed since completion, the entire rollback is refused. New files are removed and modified/deleted files are restored. Users should not edit the workspace while the agent is running: concurrent edits made during the run cannot be distinguished reliably from agent edits. Interrupted runs do not expose automatic rollback because partial agent writes cannot safely be distinguished from concurrent user edits.
 
+### Autonomous completion integrity
+
+A completed provider/model turn is not proof that the requested engineering task is correct. After an approved autonomous implementation turn ends, WTAgent persists the workflow as `verification_required`, not `completed`, and displays a verification notice. Resuming that session without a new instruction does not silently restart the model or promote the task to completed. The user must inspect the final diff and run the relevant project checks before treating the work as accepted.
+
+This is an intentional fail-closed boundary, not an automated test verdict. At this stage WTAgent does not yet parse arbitrary project acceptance criteria or independently certify every test command. A later verification engine must collect structured, machine-observed evidence before automatic completion can be enabled.
+
 ## Notes and current limitations
 
 - The shell process is persistent across sequential commands, but it is not backed by a native PTY. A foreground command occupies the shell until it exits; for a background dev server, use `start /B ...` in CMD, `Start-Process ...` in PowerShell, or `... &` in Bash. Full-screen terminal programs, raw keyboard modes, and rich terminal emulation (for example `vim` or `top`) are not supported reliably. Stop ends the shell process.

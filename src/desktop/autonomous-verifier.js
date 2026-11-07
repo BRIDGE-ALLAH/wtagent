@@ -88,13 +88,32 @@ async function resolveNodeScript(root, id, script, timeoutMs) {
   }
 }
 
-async function snapshotBaselineTestFiles(root) {
+async function snapshotVerificationIntegrityFiles(root, manifestSha256) {
   const testRoot = path.join(root, "test");
   const files = [];
   let totalBytes = 0;
   const maxFiles = 2_000;
-  const maxFileBytes = 5 * 1024 * 1024;
-  const maxTotalBytes = 64 * 1024 * 1024;
+  const maxFileBytes = 20 * 1024 * 1024;
+  const maxTotalBytes = 128 * 1024 * 1024;
+
+  files.push({ path: "package.json", sha256: manifestSha256 });
+  for (const lockName of ["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"]) {
+    const lockPath = path.join(root, lockName);
+    try {
+      const realLockPath = await fs.realpath(lockPath);
+      if (!isPathInside(root, realLockPath) || realLockPath !== lockPath) {
+        throw new Error(`A package lockfile is linked outside its workspace path: ${lockName}`);
+      }
+      const bytes = await fs.readFile(realLockPath);
+      if (bytes.length > maxFileBytes || totalBytes + bytes.length > maxTotalBytes) {
+        throw new Error("Package lockfiles exceed the verification integrity snapshot budget.");
+      }
+      totalBytes += bytes.length;
+      files.push({ path: lockName, sha256: createHash("sha256").update(bytes).digest("hex") });
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
 
   async function visit(directory) {
     let entries;
@@ -185,7 +204,7 @@ export async function resolveAutonomousChecks({ workspace }) {
 
   let integrityFiles = [];
   try {
-    integrityFiles = await snapshotBaselineTestFiles(root);
+    integrityFiles = await snapshotVerificationIntegrityFiles(root, manifestSha256);
     for (const check of checks) {
       integrityFiles.push({
         path: path.relative(root, check.args[0]),

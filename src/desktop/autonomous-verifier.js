@@ -423,23 +423,25 @@ export function recordAutonomousMachineVerification(workflow, result, now = new 
     ...(Array.isArray(result?.checks) ? result.checks : []),
     ...(Array.isArray(result?.unsupported) ? result.unsupported : []),
   ];
-  const machineVerified = result?.status === "passed"
+  const policyBlocked = Boolean(workflow.repairBlockedReason);
+  const machineVerified = !policyBlocked
+    && result?.status === "passed"
     && checks.length > 0
     && checks.every((check) => check.status === "passed" && check.exitCode === 0 && check.completionKnown === true);
   return {
     ...workflow,
     phase: machineVerified ? "completed" : "verification_required",
-    verificationStatus: machineVerified ? "machine_verified" : String(result?.status ?? "unavailable"),
+    verificationStatus: machineVerified ? "machine_verified" : policyBlocked ? "policy_denied" : String(result?.status ?? "unavailable"),
     verificationStartedAt: result?.startedAt ?? now,
     verificationCompletedAt: result?.finishedAt ?? now,
     machineVerification: {
-      status: String(result?.status ?? "unavailable"),
+      status: policyBlocked ? "policy_denied" : String(result?.status ?? "unavailable"),
       durationMs: Number.isFinite(result?.durationMs) ? result.durationMs : null,
-      reason: result?.reason ?? null,
+      reason: workflow.repairBlockedReason ?? result?.reason ?? null,
       checks,
     },
     verificationRequiredAt: machineVerified ? null : now,
     completedAt: machineVerified ? now : null,
-    lastError: machineVerified ? null : result?.reason ?? "Machine verification did not pass.",
+    lastError: machineVerified ? null : workflow.repairBlockedReason ?? result?.reason ?? "Machine verification did not pass.",
   };
 }

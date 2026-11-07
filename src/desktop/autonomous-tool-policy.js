@@ -47,8 +47,18 @@ async function validateWorkspaceWrite(name, workspaceRoot, resolvedPath, verific
     ? verificationPlan.checks.map((check) => check?.args?.[0]).filter((value) => typeof value === "string")
     : [];
   for (const scriptPath of protectedScripts) {
-    const canonicalScript = path.resolve(scriptPath);
-    if (canonicalScript === canonicalTarget) {
+    let canonicalScript;
+    try {
+      const resolvedScript = await resolveToolPath(canonicalRoot, scriptPath);
+      if (!resolvedScript.inside) continue;
+      canonicalScript = resolvedScript.path;
+    } catch {
+      return denied("AUTONOMOUS_PATH_STATE_UNKNOWN", "A captured verification script could not be safely resolved.");
+    }
+    // Compare canonical paths in both directions. This handles Windows drive
+    // casing and macOS temporary-directory aliases without prefix matching.
+    if (isPathInside(canonicalScript, canonicalTarget)
+      && isPathInside(canonicalTarget, canonicalScript)) {
       return denied("AUTONOMOUS_VERIFIER_PROTECTED", "A script captured by the trusted verification plan cannot be modified during unattended implementation.");
     }
   }

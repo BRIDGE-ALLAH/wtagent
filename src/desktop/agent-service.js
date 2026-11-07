@@ -65,6 +65,7 @@ export class DesktopAgentService {
     this.workspaceCheckpoint = null;
     this.running = false;
     this.closed = false;
+    this.closePromise = null;
     this.cancelRequested = false;
     this.lifecycleGuard = createLifecycleGuard();
   }
@@ -650,21 +651,21 @@ export class DesktopAgentService {
   }
 
   async close() {
-    if (this.closed) {
-      await this.lifecycleGuard.waitForIdle();
-      return;
-    }
+    if (this.closePromise) return await this.closePromise;
     this.closed = true;
     this.cancelRequested = true;
     if (this.adapter) this.adapter.escCancelRequested = true;
     this.#denyPendingApprovals();
     this.continueProviderSelection();
-    await this.lifecycleGuard.waitForIdle();
-    if (this.session && ["initializing", "running", "waiting_model", "auth_required"].includes(this.session.state.phase)) {
-      await this.session.update({ phase: "interrupted", lastError: this.session.state.lastError || "Desktop app closed." }).catch(() => {});
-    }
-    this.#denyPendingApprovals();
-    await this.processManager?.stopAll().catch(() => {});
-    await this.adapter?.close().catch(() => {});
+    this.closePromise = (async () => {
+      await this.lifecycleGuard.waitForIdle();
+      if (this.session && ["initializing", "running", "waiting_model", "auth_required"].includes(this.session.state.phase)) {
+        await this.session.update({ phase: "interrupted", lastError: this.session.state.lastError || "Desktop app closed." }).catch(() => {});
+      }
+      this.#denyPendingApprovals();
+      await this.processManager?.stopAll().catch(() => {});
+      await this.adapter?.close().catch(() => {});
+    })();
+    return await this.closePromise;
   }
 }

@@ -105,6 +105,8 @@ export function recordAutonomousVerificationAttempt(workflow, result, now = new 
       durationMs: check.durationMs ?? null,
       completionKnown: check.completionKnown === true,
       outputTruncated: check.outputTruncated === true,
+      stdout: String(check.stdout ?? "").slice(-4_000),
+      stderr: String(check.stderr ?? "").slice(-4_000),
     })),
   };
   return {

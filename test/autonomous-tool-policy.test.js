@@ -121,3 +121,20 @@ test("autonomous policy allows adding a new test without overwriting baseline te
   });
   assert.equal(result.action, "allow");
 });
+
+test("autonomous policy protects every script captured by the trusted verification plan", async (t) => {
+  const root = await fixture(t);
+  await fs.mkdir(path.join(root, "ci"), { recursive: true });
+  await fs.writeFile(path.join(root, "ci", "custom-check.js"), "process.exit(0);");
+  const result = await evaluateAutonomousToolPolicy({
+    toolCall: { name: "fs.write", args: { path: "ci/custom-check.js" } },
+    definition: definition("fs.write", "write"),
+    projectRoot: root,
+    verificationPlan: {
+      checks: [{ id: "package:test", args: [path.join(root, "ci", "custom-check.js")] }],
+    },
+  });
+  assert.equal(result.action, "deny");
+  assert.equal(result.code, "AUTONOMOUS_VERIFIER_PROTECTED");
+});
+

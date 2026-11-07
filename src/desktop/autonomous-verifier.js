@@ -464,6 +464,7 @@ export async function runAutonomousVerification({
       finishedAt: new Date().toISOString(),
       checks: [],
       unsupported: resolved.unsupported,
+      manifestSha256: resolved.manifestSha256 ?? null,
       reason: resolved.reason,
     };
   }
@@ -522,10 +523,17 @@ export async function runAutonomousVerification({
   const passed = resolved.unsupported.length === 0
     && results.length === selectedChecks.length
     && results.every((item) => item.status === "passed" && item.exitCode === 0 && item.completionKnown);
-  const status = passed
+  let status = passed
     ? "passed"
     : allChecks.some((item) => item.status === "timed_out") ? "timed_out"
       : resolved.unsupported.length ? "unsupported" : "failed";
+  let reason = passed ? null : resolved.reason ?? "One or more required checks did not produce confirmed successful exit evidence.";
+  const postRunIntegrityError = await verifyAutonomousVerificationPlan(workspaceRoot, resolved);
+  if (postRunIntegrityError) {
+    status = "integrity_failed";
+    reason = postRunIntegrityError;
+    allChecks.push(unsupported("verification:integrity", postRunIntegrityError));
+  }
 
   return {
     status,
@@ -534,7 +542,9 @@ export async function runAutonomousVerification({
     durationMs: Date.now() - started,
     checks: allChecks,
     unsupported: resolved.unsupported,
-    reason: passed ? null : resolved.reason ?? "One or more required checks did not produce confirmed successful exit evidence.",
+    manifestSha256: resolved.manifestSha256 ?? null,
+    baselineIntegrityFileCount: resolved.integrityFiles?.length ?? 0,
+    reason,
   };
 }
 

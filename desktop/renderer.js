@@ -937,7 +937,7 @@ api.onAgentEvent((event) => {
       setAgentStatus("Memproses tugas…", "busy");
       appendActivity("Agent mulai bekerja", payload.instruction || "");
       break;
-    case "desktop.turn_finished":
+    case "desktop.turn_finished": {
       const verificationButton = $(".autonomous-verification-card button");
       if (verificationButton) {
         verificationButton.disabled = false;
@@ -948,6 +948,7 @@ api.onAgentEvent((event) => {
       refreshGitStatus();
       reloadActiveFileIfClean();
       break;
+    }
     case "browser.started":
       setAgentStatus("Menghubungkan browser…", "busy");
       appendActivity("Membuka browser", payload.profileDir || "");

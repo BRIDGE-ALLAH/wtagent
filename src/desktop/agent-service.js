@@ -39,6 +39,7 @@ import {
 import { WorkspaceCheckpoint } from "./workspace-checkpoint.js";
 import { evaluateAutonomousToolPolicy } from "./autonomous-tool-policy.js";
 import { runAutonomousVerification, recordAutonomousMachineVerification } from "./autonomous-verifier.js";
+import { getSessionRecoveryStatus } from "./session-recovery.js";
 
 function emitSafely(callback, event) {
   try {
@@ -264,7 +265,8 @@ export class DesktopAgentService {
       createdAt: state.createdAt || null,
       updatedAt: state.updatedAt || state.createdAt || null,
       lastError: state.lastError || null,
-      recoveryRequired: Boolean(state.pendingOutbound || state.pendingAssistantTurn),
+      recoveryRequired: getSessionRecoveryStatus(state).required,
+      recoveryBlocked: getSessionRecoveryStatus(state).blocked,
       workflowMode: state.desktopWorkflowMode || "agent",
       autonomousPhase: state.autonomousWorkflow?.phase ?? null,
     }));
@@ -277,6 +279,21 @@ export class DesktopAgentService {
     const sessionsDir = getSessionsDir(appDataDir);
     await ensureDirectory(sessionsDir);
     const session = await AgentSession.load({ sessionsDir, sessionId: String(sessionId ?? "") });
+    const recoveryStatus = getSessionRecoveryStatus(session.state);
+    if (recoveryStatus.blocked) {
+      this.#emit("desktop.recovery_blocked", {
+        sessionId: session.sessionId,
+        code: recoveryStatus.code,
+        message: recoveryStatus.reason,
+      });
+      return {
+        sessionId: session.sessionId,
+        recoveryRequired: true,
+        recoveryBlocked: true,
+        recoveryCode: recoveryStatus.code,
+        reason: recoveryStatus.reason,
+      };
+    }
     const projectRoot = path.resolve(String(session.state.projectRoot ?? ""));
     const projectStat = await fs.stat(projectRoot);
     if (!projectStat.isDirectory()) throw new Error("Folder proyek sesi ini tidak lagi tersedia.");
@@ -287,7 +304,7 @@ export class DesktopAgentService {
     this.workflowMode = normalizeWorkflowMode(workflowMode ?? session.state.desktopWorkflowMode);
     this.autonomousWorkflow = session.state.autonomousWorkflow ?? null;
     const text = String(instruction ?? "").trim();
-    const pendingRecovery = Boolean(session.state.pendingOutbound || session.state.pendingAssistantTurn);
+    const pendingRecovery = recoveryStatus.required;
     if (this.autonomousWorkflow?.phase === "awaiting_approval" && text) {
       throw new Error("Tinjau, setujui, atau tolak rencana autonomous sebelum mengirim instruksi baru.");
     }

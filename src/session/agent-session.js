@@ -1437,7 +1437,7 @@ export class AgentSession {
     await this.update({ pendingToolResult: null });
   }
 
-  async appendInstruction(instruction, { files = [] } = {}) {
+  async appendInstruction(instruction, { files = [], statePatch = null } = {}) {
     const item = {
       instruction,
       createdAt: new Date().toISOString(),
@@ -1448,9 +1448,20 @@ export class AgentSession {
         path: file.path ?? null,
       }));
     }
+    if (
+      statePatch !== null
+      && (!statePatch || typeof statePatch !== "object" || Array.isArray(statePatch))
+    ) {
+      throw new TypeError("Instruction state checkpoint must be a plain object.");
+    }
+    const checkpoint = statePatch === null ? null : structuredClone(statePatch);
+    if (checkpoint && ["followUps", "stateRevision", "updatedAt"].some((key) => key in checkpoint)) {
+      throw new Error("Instruction checkpoint cannot replace session-managed fields.");
+    }
     await this.#mutateState((nextState) => {
       nextState.followUps.push(structuredClone(item));
       nextState.lastError = null;
+      if (checkpoint) Object.assign(nextState, checkpoint);
     });
     await this.appendEvent("session.instruction_added", item);
   }

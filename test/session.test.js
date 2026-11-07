@@ -208,6 +208,42 @@ test("persists the provider and reloads it", async (t) => {
   assert.equal(reloaded.state.provider, "deepseek");
 });
 
+test("appendInstruction persists its follow-up and workflow checkpoint atomically", async (t) => {
+  const { tasksDir, projectRoot } = await makeFixture(t);
+  const session = await AgentSession.create({
+    sessionsDir: tasksDir,
+    task: "autonomous checkpoint",
+    projectRoot,
+    provider: "chatgpt",
+    mode: null,
+  });
+  const autonomousWorkflow = {
+    version: 1,
+    phase: "implementing",
+    task: "Add a settings page",
+    planSha256: "f".repeat(64),
+    approvedAt: "2026-11-07T00:00:00.000Z",
+  };
+  await session.appendInstruction("Implement the approved settings plan", {
+    statePatch: {
+      desktopWorkflowMode: "autonomous",
+      autonomousWorkflow,
+    },
+  });
+
+  assert.equal(session.state.desktopWorkflowMode, "autonomous");
+  assert.deepEqual(session.state.autonomousWorkflow, autonomousWorkflow);
+  assert.equal(session.state.followUps.at(-1).instruction, "Implement the approved settings plan");
+
+  const reloaded = await AgentSession.load({
+    sessionsDir: tasksDir,
+    sessionId: session.sessionId,
+  });
+  assert.equal(reloaded.state.desktopWorkflowMode, "autonomous");
+  assert.deepEqual(reloaded.state.autonomousWorkflow, autonomousWorkflow);
+  assert.equal(reloaded.state.followUps.at(-1).instruction, "Implement the approved settings plan");
+});
+
 test("serializes concurrent session snapshots without losing checkpoints", async (t) => {
   const { tasksDir, projectRoot } = await makeFixture(t);
   const session = await AgentSession.create({

@@ -84,6 +84,10 @@ export class DesktopAgentService {
         try {
           this.autonomousWorkflow = storeAutonomousPlan(this.autonomousWorkflow, payload.message);
           await this.session.update({ autonomousWorkflow: this.autonomousWorkflow });
+          await this.session.appendEvent("autonomous.plan_ready", {
+            planSha256: this.autonomousWorkflow.planSha256,
+            plannedAt: this.autonomousWorkflow.plannedAt,
+          });
           this.#emit("desktop.plan_ready", {
             plan: this.autonomousWorkflow.plan,
             planSha256: this.autonomousWorkflow.planSha256,
@@ -93,6 +97,7 @@ export class DesktopAgentService {
         } catch (error) {
           this.autonomousWorkflow = { ...this.autonomousWorkflow, phase: "plan_failed", lastError: error.message };
           await this.session.update({ autonomousWorkflow: this.autonomousWorkflow });
+          await this.session.appendEvent("autonomous.plan_failed", { message: this.autonomousWorkflow.lastError });
           this.#emit("desktop.plan_failed", { message: error.message || "Agent belum menghasilkan rencana yang dapat ditinjau." });
         }
       } else if (this.autonomousWorkflow?.phase === "implementing") {
@@ -103,6 +108,10 @@ export class DesktopAgentService {
           lastError: null,
         };
         await this.session.update({ autonomousWorkflow: this.autonomousWorkflow });
+        await this.session.appendEvent("autonomous.completed", {
+          completedAt: this.autonomousWorkflow.completedAt,
+          planSha256: this.autonomousWorkflow.planSha256,
+        });
         this.#emit("desktop.autonomous_completed", {
           completedAt: this.autonomousWorkflow.completedAt,
           planSha256: this.autonomousWorkflow.planSha256,
@@ -448,12 +457,27 @@ export class DesktopAgentService {
     this.autonomousDecisionInProgress = true;
     try {
       const approved = approveAutonomousWorkflow(this.session.state.autonomousWorkflow ?? this.autonomousWorkflow);
+      const instruction = buildApprovedImplementationInstruction(approved);
       this.workflowMode = "autonomous";
       this.autonomousWorkflow = approved;
-      await this.session.update({ desktopWorkflowMode: "autonomous", autonomousWorkflow: approved });
-      const instruction = buildApprovedImplementationInstruction(approved);
-      await this.session.appendInstruction(instruction);
-      this.#emit("desktop.plan_approved", { approvedAt: approved.approvedAt, planSha256: approved.planSha256 });
+      // Persist the implementation instruction and approval phase in the same
+      // state snapshot. A crash cannot leave an approved phase without its
+      // corresponding resumable instruction (or a queued instruction while
+      // still appearing unapproved).
+      await this.session.appendInstruction(instruction, {
+        statePatch: {
+          desktopWorkflowMode: "autonomous",
+          autonomousWorkflow: approved,
+        },
+      });
+      await this.session.appendEvent("autonomous.plan_approved", {
+        approvedAt: approved.approvedAt,
+        planSha256: approved.planSha256,
+      });
+      this.#emit("desktop.plan_approved", {
+        approvedAt: approved.approvedAt,
+        planSha256: approved.planSha256,
+      });
       return await this.#runTurn({
         resume: true,
         instruction,
@@ -474,6 +498,10 @@ export class DesktopAgentService {
       this.workflowMode = "autonomous";
       this.autonomousWorkflow = rejected;
       await this.session.update({ desktopWorkflowMode: "autonomous", autonomousWorkflow: rejected });
+      await this.session.appendEvent("autonomous.plan_rejected", {
+        rejectedAt: rejected.rejectedAt,
+        planSha256: rejected.planSha256,
+      });
       this.#emit("desktop.plan_rejected", { rejectedAt: rejected.rejectedAt, planSha256: rejected.planSha256 });
       return true;
     } finally {

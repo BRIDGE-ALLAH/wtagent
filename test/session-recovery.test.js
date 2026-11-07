@@ -6,6 +6,7 @@ test("no pending state does not require recovery", () => {
   assert.deepEqual(getSessionRecoveryStatus({}), {
     required: false,
     blocked: false,
+    requiresBareResume: false,
     code: null,
     reason: null,
   });
@@ -20,6 +21,7 @@ test("pending outbound, assistant handoff, and tool result require reconciliatio
     const result = getSessionRecoveryStatus(state);
     assert.equal(result.required, true);
     assert.equal(result.blocked, false);
+    assert.equal(result.requiresBareResume, true);
     assert.equal(result.code, "SESSION_RECOVERY_REQUIRED");
   }
 });
@@ -30,6 +32,7 @@ test("pending auxiliary turn blocks automatic replay", () => {
   });
   assert.equal(result.required, true);
   assert.equal(result.blocked, true);
+  assert.equal(result.requiresBareResume, false);
   assert.equal(result.code, "AUXILIARY_TURN_RECOVERY_REQUIRED");
   assert.match(result.reason, /will not replay it automatically/);
 });

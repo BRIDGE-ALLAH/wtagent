@@ -51,3 +51,29 @@ test("close denies approvals before closing the adapter and is idempotent", asyn
   assert.equal(service.pendingApprovals.size, 0);
   assert.equal(service.closed, true);
 });
+
+test("concurrent close calls await the same adapter shutdown", async () => {
+  const service = new DesktopAgentService();
+  let releaseAdapter;
+  let closeCalls = 0;
+  service.adapter = {
+    close: () => {
+      closeCalls += 1;
+      return new Promise((resolve) => { releaseAdapter = resolve; });
+    },
+  };
+  let firstSettled = false;
+  let secondSettled = false;
+  const first = service.close().then(() => { firstSettled = true; });
+  const second = service.close().then(() => { secondSettled = true; });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(closeCalls, 1);
+  assert.equal(firstSettled, false);
+  assert.equal(secondSettled, false);
+  releaseAdapter();
+  await Promise.all([first, second]);
+  assert.equal(firstSettled, true);
+  assert.equal(secondSettled, true);
+  assert.equal(closeCalls, 1);
+});

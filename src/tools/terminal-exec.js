@@ -104,6 +104,10 @@ export async function runProgram({
   spawnImpl = spawn,
   platform = process.platform,
   resolveLaunchPlanImpl = resolveLaunchPlan,
+  killProcessTreeImpl = killProcessTree,
+  stopGraceMs = 1_000,
+  forceGraceMs = 1_000,
+  envOverrides = {},
 }) {
   return await new Promise((resolve) => {
     const startedAt = Date.now();
@@ -117,7 +121,10 @@ export async function runProgram({
     let settled = false;
     let terminationGuard = null;
     let outputQueue = Promise.resolve();
-    const environment = buildToolEnvironment({ inheritSensitive: inheritSensitiveEnv });
+    const environment = {
+      ...buildToolEnvironment({ inheritSensitive: inheritSensitiveEnv }),
+      ...envOverrides,
+    };
     const launchPlan = resolveLaunchPlanImpl({
       program,
       argv,
@@ -224,20 +231,22 @@ export async function runProgram({
 
     const timer = setTimeout(async () => {
       timedOut = true;
-      await killProcessTree(child.pid);
+      await killProcessTreeImpl(child.pid, "SIGTERM").catch(() => undefined);
+      if (settled) return;
 
-      if (settled) {
-        return;
-      }
-
-      terminationGuard = setTimeout(() => {
-        void finish({
-          ok: false,
-          exitCode: null,
-          signal: null,
-          completionUnknown: true,
-        });
-      }, 1_000);
+      terminationGuard = setTimeout(async () => {
+        await killProcessTreeImpl(child.pid, "SIGKILL").catch(() => undefined);
+        if (settled) return;
+        terminationGuard = setTimeout(() => {
+          void finish({
+            ok: false,
+            exitCode: null,
+            signal: null,
+            completionUnknown: true,
+          });
+        }, forceGraceMs);
+        terminationGuard.unref?.();
+      }, stopGraceMs);
       terminationGuard.unref?.();
     }, timeoutMs);
     timer.unref?.();

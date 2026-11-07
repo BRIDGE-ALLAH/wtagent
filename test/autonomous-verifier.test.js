@@ -254,7 +254,7 @@ test("targeted repair refuses to turn unknown completion or integrity failure in
       checks: [{ id: "package:test", status: "passed", exitCode: 0, completionKnown: true }],
     },
   );
-  assert.equal(unknown.status, "passed");
+  assert.equal(unknown.status, "timed_out");
 
   const integrity = mergeAutonomousVerificationResults(
     {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { assertSessionCanAcceptInstruction, getSessionRecoveryStatus } from "../src/desktop/session-recovery.js";
+import { DesktopAgentService } from "../src/desktop/agent-service.js";
 
 test("no pending state does not require recovery", () => {
   assert.deepEqual(getSessionRecoveryStatus({}), {
@@ -63,4 +64,33 @@ test("blocked auxiliary turns reject all new instructions", () => {
 
 test("sessions without pending recovery accept instructions", () => {
   assert.equal(assertSessionCanAcceptInstruction({}, "new task").required, false);
+});
+
+
+test("active service rejects a new instruction before mutating a recovery-required session", async () => {
+  const service = new DesktopAgentService();
+  const state = {
+    pendingOutbound: { outboundId: "out-1" },
+    desktopWorkflowMode: "autonomous",
+    autonomousWorkflow: { phase: "implementing", task: "original task" },
+    generationType: "agent",
+    projectRoot: "/unused",
+  };
+  let updateCalls = 0;
+  let appendCalls = 0;
+  service.session = {
+    state,
+    update: async () => { updateCalls += 1; },
+    appendInstruction: async () => { appendCalls += 1; },
+  };
+
+  await assert.rejects(
+    service.send("start a different task", "agent"),
+    { code: "RECOVERY_REQUIRES_BARE_RESUME" },
+  );
+  assert.equal(updateCalls, 0);
+  assert.equal(appendCalls, 0);
+  assert.equal(service.workflowMode, "agent");
+  assert.equal(service.autonomousWorkflow, null);
+  assert.equal(state.autonomousWorkflow.phase, "implementing");
 });

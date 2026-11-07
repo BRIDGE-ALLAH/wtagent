@@ -1329,8 +1329,11 @@ export class AgentRuntime {
         : [userMessage(prompt.user, messageOptions)];
       initialKind = rebuildingFreshConversation ? "fresh_rebuild" : "resume";
     } else {
+      // Desktop workflows may inject a turn-specific, policy-bearing task
+      // wrapper while the session retains the unmodified user request.
+      const bootstrapTask = instruction?.trim() || task;
       const prompt = buildBootstrapPrompt({
-        task,
+        task: bootstrapTask,
         projectRoot,
         tools: this.registry.list(),
         nativeImages: Boolean(this.nativeImageReceiver),

@@ -29,6 +29,7 @@ import {
   buildAutonomousImplementationInstruction,
   buildAutonomousRepairInstruction,
   recordAutonomousVerificationAttempt,
+  getRepairableCheckIds,
   buildApprovedImplementationInstruction,
   buildAutonomousPlanningInstruction,
   createAutonomousWorkflow,
@@ -178,20 +179,16 @@ export class DesktopAgentService {
           };
         }
         const attemptedWorkflow = recordAutonomousVerificationAttempt(this.autonomousWorkflow, verification);
-        const repairableFailures = verification.checks.filter((check) => (
-          check.status === "failed"
-          && check.completionKnown === true
-          && Number.isInteger(check.exitCode)
-          && check.exitCode !== 0
-        ));
+        const repairableCheckIds = getRepairableCheckIds(verification);
+        const repairableFailures = verification.checks.filter((check) => repairableCheckIds.includes(check.id));
         const repairAttempts = Number(attemptedWorkflow.repairAttempts ?? 0);
-        if (verification.status === "failed" && repairableFailures.length > 0 && repairAttempts < 2 && !attemptedWorkflow.repairBlockedReason) {
+        if (repairableCheckIds.length > 0 && repairAttempts < 2 && !attemptedWorkflow.repairBlockedReason) {
           const nextAttempt = repairAttempts + 1;
           const repairWorkflow = {
             ...attemptedWorkflow,
             phase: "implementing",
             repairAttempts: nextAttempt,
-            pendingRepairCheckIds: repairableFailures.map((check) => check.id),
+            pendingRepairCheckIds: repairableCheckIds,
             completedAt: null,
           };
           const repairInstruction = buildAutonomousRepairInstruction(

@@ -120,6 +120,18 @@ export function recordAutonomousVerificationAttempt(workflow, result, now = new 
   };
 }
 
+
+export function getRepairableCheckIds(result) {
+  const checks = Array.isArray(result?.checks) ? result.checks : [];
+  if (!checks.length || result?.status !== "failed") return [];
+  const safeExitEvidence = checks.every((check) => (
+    (check.status === "passed" && check.exitCode === 0 && check.completionKnown === true)
+    || (check.status === "failed" && Number.isInteger(check.exitCode) && check.exitCode !== 0 && check.completionKnown === true)
+  ));
+  if (!safeExitEvidence) return [];
+  return checks.filter((check) => check.status === "failed").map((check) => check.id);
+}
+
 export function buildAutonomousRepairInstruction(workflow, failedChecks, attemptNumber) {
   if (
     !workflow

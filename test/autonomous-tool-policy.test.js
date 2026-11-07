@@ -72,3 +72,52 @@ test("autonomous policy fails closed on missing definitions and risk mismatches"
   });
   assert.equal(mismatch.code, "AUTONOMOUS_TOOL_RISK_MISMATCH");
 });
+
+test("autonomous policy protects manifests, dependency trees, verifier scripts, and baseline tests", async (t) => {
+  const root = await fixture(t);
+  await fs.mkdir(path.join(root, "test"), { recursive: true });
+  await fs.mkdir(path.join(root, "scripts"), { recursive: true });
+  await fs.mkdir(path.join(root, "node_modules", "sample"), { recursive: true });
+  await fs.mkdir(path.join(root, ".git"), { recursive: true });
+  for (const file of [
+    "package.json",
+    "package-lock.json",
+    "test/existing.test.js",
+    "scripts/run-tests.js",
+    "scripts/check-syntax.js",
+    "node_modules/sample/index.js",
+    ".git/config",
+  ]) {
+    await fs.writeFile(path.join(root, file), "fixture");
+  }
+
+  for (const file of [
+    "package.json",
+    "package-lock.json",
+    "test/existing.test.js",
+    "scripts/run-tests.js",
+    "scripts/check-syntax.js",
+    "node_modules/sample/index.js",
+    ".git/config",
+  ]) {
+    const result = await evaluateAutonomousToolPolicy({
+      toolCall: { name: "fs.write", args: { path: file } },
+      definition: definition("fs.write", "write"),
+      projectRoot: root,
+    });
+    assert.equal(result.action, "deny", file);
+    assert.match(result.code, /^AUTONOMOUS_/);
+    assert.ok(result.reasons[0].startsWith(result.code), "stable denial code must reach the model");
+  }
+});
+
+test("autonomous policy allows adding a new test without overwriting baseline tests", async (t) => {
+  const root = await fixture(t);
+  await fs.mkdir(path.join(root, "test"));
+  const result = await evaluateAutonomousToolPolicy({
+    toolCall: { name: "fs.write", args: { path: "test/new-feature.test.js" } },
+    definition: definition("fs.write", "write"),
+    projectRoot: root,
+  });
+  assert.equal(result.action, "allow");
+});

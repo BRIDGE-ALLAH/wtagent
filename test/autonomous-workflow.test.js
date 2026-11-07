@@ -8,6 +8,8 @@ import {
   buildApprovedImplementationInstruction,
   beginAutonomousImplementation,
   buildAutonomousImplementationInstruction,
+  buildAutonomousRepairInstruction,
+  recordAutonomousVerificationAttempt,
   buildAutonomousPlanningInstruction,
   createAutonomousWorkflow,
   normalizeWorkflowMode,
@@ -125,4 +127,30 @@ test("autonomous plan can advance to implementation without claiming user approv
   assert.match(instruction, /AUTONOMOUS IMPLEMENTATION/);
   assert.doesNotMatch(instruction, /user explicitly approved/i);
   assert.match(instruction, /Never push, publish, release, deploy/);
+});
+
+test("autonomous repair prompt is scoped and hard-limited to two attempts", () => {
+  const planned = storeAutonomousPlan(createAutonomousWorkflow("Fix parser"), "Plan");
+  const implementing = beginAutonomousImplementation(planned);
+  const failed = [{ id: "package:test", status: "failed", exitCode: 1, completionKnown: true, stderr: "assertion failed" }];
+  const prompt = buildAutonomousRepairInstruction(implementing, failed, 1);
+  assert.match(prompt, /ATTEMPT 1 OF 2/);
+  assert.match(prompt, /untrusted data/);
+  assert.match(prompt, /Do not run shell commands/);
+  assert.throws(() => buildAutonomousRepairInstruction(implementing, failed, 3), /attempt budget/);
+});
+
+test("verification attempts are persisted as bounded machine summaries", () => {
+  const planned = storeAutonomousPlan(createAutonomousWorkflow("Fix parser"), "Plan");
+  const implementing = beginAutonomousImplementation(planned);
+  const recorded = recordAutonomousVerificationAttempt(implementing, {
+    status: "failed",
+    startedAt: "2026-11-07T00:00:00.000Z",
+    finishedAt: "2026-11-07T00:00:01.000Z",
+    durationMs: 1000,
+    checks: [{ id: "package:test", status: "failed", exitCode: 1, completionKnown: true, stdout: "x".repeat(100) }],
+  });
+  assert.equal(recorded.verificationAttempts.length, 1);
+  assert.equal(recorded.verificationAttempts[0].checks[0].exitCode, 1);
+  assert.equal(recorded.machineVerification.checks[0].stdout.length, 100);
 });

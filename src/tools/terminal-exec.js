@@ -231,11 +231,11 @@ export async function runProgram({
 
     const timer = setTimeout(async () => {
       timedOut = true;
-      await killProcessTreeImpl(child.pid, "SIGTERM").catch(() => undefined);
+      await Promise.resolve().then(() => killProcessTreeImpl(child.pid, "SIGTERM")).catch(() => undefined);
       if (settled) return;
 
       terminationGuard = setTimeout(async () => {
-        await killProcessTreeImpl(child.pid, "SIGKILL").catch(() => undefined);
+        await Promise.resolve().then(() => killProcessTreeImpl(child.pid, "SIGKILL")).catch(() => undefined);
         if (settled) return;
         terminationGuard = setTimeout(() => {
           void finish({

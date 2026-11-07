@@ -860,7 +860,8 @@ api.onAgentEvent((event) => {
       if (payload.workflowMode) $("#agent-mode").value = payload.workflowMode;
       appendActivity(payload.resumed ? "Sesi dipulihkan" : "Session dimulai", payload.sessionId);
       if (payload.autonomousWorkflow?.phase === "awaiting_approval") showAutonomousPlan(payload.autonomousWorkflow);
-      if (payload.autonomousWorkflow?.phase === "plan_failed") appendMessage("system", payload.autonomousWorkflow.lastError || "Rencana autonomous gagal dibuat. Kirim ulang tugas untuk mencoba lagi.", "error");\n      if (payload.autonomousWorkflow?.phase === "verification_required") appendMessage("system", "Implementasi autonomous sudah berhenti, tetapi belum dinyatakan selesai. Periksa diff dan jalankan test/build yang relevan sebelum menerima hasil.", "notice");
+      if (payload.autonomousWorkflow?.phase === "plan_failed") appendMessage("system", payload.autonomousWorkflow.lastError || "Rencana autonomous gagal dibuat. Kirim ulang tugas untuk mencoba lagi.", "error");
+      if (payload.autonomousWorkflow?.phase === "verification_required") appendMessage("system", "Implementasi autonomous sudah berhenti, tetapi belum dinyatakan selesai. Periksa diff dan jalankan test/build yang relevan sebelum menerima hasil.", "notice");
       if (payload.recoveryRequired) appendMessage("system", "Sesi memiliki operasi browser yang statusnya belum pasti. WTAgent akan melakukan bare recovery terlebih dahulu; jangan mengirim ulang instruksi yang sama sebelum proses ini selesai.", "notice");
       persistChat();
       break;

@@ -32,7 +32,7 @@ import {
   shouldEnforceReadOnlyPolicy,
   storeAutonomousPlan,
 } from "./autonomous-workflow.js";
-import { WorkspaceCheckpoint } from "./workspace-checkpoint.js";} from "./autonomous-workflow.js";
+import { WorkspaceCheckpoint } from "./workspace-checkpoint.js";
 
 function emitSafely(callback, event) {
   try {

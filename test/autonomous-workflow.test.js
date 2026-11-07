@@ -154,3 +154,18 @@ test("verification attempts are persisted as bounded machine summaries", () => {
   assert.equal(recorded.verificationAttempts[0].checks[0].exitCode, 1);
   assert.equal(recorded.machineVerification.checks[0].stdout.length, 100);
 });
+
+test("unattended policy denial prevents machine completion", () => {
+  const planned = storeAutonomousPlan(createAutonomousWorkflow("Implement safely"), "Plan");
+  const implementing = beginAutonomousImplementation(planned);
+  const blocked = recordAutonomousMachineVerification({
+    ...implementing,
+    repairBlockedReason: "AUTONOMOUS_TOOL_NOT_ALLOWED: terminal.exec is denied",
+  }, {
+    status: "passed",
+    checks: [{ id: "package:test", status: "passed", exitCode: 0, completionKnown: true }],
+  });
+  assert.equal(blocked.phase, "verification_required");
+  assert.equal(blocked.verificationStatus, "policy_denied");
+  assert.equal(blocked.completedAt, null);
+});

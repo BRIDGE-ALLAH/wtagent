@@ -162,7 +162,7 @@ function showProviderSelection(payload) {
   $("#chat-feed").scrollTop = $("#chat-feed").scrollHeight;
 }
 
-function showAutonomousVerification(payload) {
+function showAutonomousVerification(payload, ready = true) {
   $(".autonomous-verification-card")?.remove();
   const card = document.createElement("section");
   card.className = "autonomous-plan-card autonomous-verification-card";
@@ -175,7 +175,8 @@ function showAutonomousVerification(payload) {
   const button = document.createElement("button");
   button.className = "button primary";
   button.type = "button";
-  button.textContent = "Saya sudah memeriksa hasil";
+  button.disabled = !ready;
+  button.textContent = ready ? "Saya sudah memeriksa hasil" : "Menunggu agent berhenti…";
   button.addEventListener("click", async () => {
     const note = window.prompt("Tuliskan perintah verifikasi yang benar-benar dijalankan, hasilnya, dan bahwa Anda telah memeriksa final diff. Catatan ini menjadi attestasi pengguna (maksimum 4 KB).");
     if (note == null) return;
@@ -893,7 +894,7 @@ api.onAgentEvent((event) => {
       appendActivity(payload.resumed ? "Sesi dipulihkan" : "Session dimulai", payload.sessionId);
       if (payload.autonomousWorkflow?.phase === "awaiting_approval") showAutonomousPlan(payload.autonomousWorkflow);
       if (payload.autonomousWorkflow?.phase === "plan_failed") appendMessage("system", payload.autonomousWorkflow.lastError || "Rencana autonomous gagal dibuat. Kirim ulang tugas untuk mencoba lagi.", "error");
-      if (payload.autonomousWorkflow?.phase === "verification_required") showAutonomousVerification(payload.autonomousWorkflow);
+      if (payload.autonomousWorkflow?.phase === "verification_required") showAutonomousVerification(payload.autonomousWorkflow, true);
       if (payload.autonomousWorkflow?.phase === "accepted") appendMessage("system", "Hasil autonomous telah diterima berdasarkan pemeriksaan pengguna. Catatan: " + (payload.autonomousWorkflow.verificationSummary || "tidak tersedia"), "notice");
       if (payload.recoveryRequired) appendMessage("system", "Sesi memiliki operasi browser yang statusnya belum pasti. WTAgent akan melakukan bare recovery terlebih dahulu; jangan mengirim ulang instruksi yang sama sebelum proses ini selesai.", "notice");
       persistChat();
@@ -914,7 +915,7 @@ api.onAgentEvent((event) => {
       appendActivity("Rencana ditolak", "Tidak ada implementasi dijalankan dari rencana ini.");
       break;
     case "desktop.autonomous_verification_required":
-      showAutonomousVerification(payload);
+      showAutonomousVerification(payload, false);
       appendActivity("Menunggu verifikasi hasil", "Selesainya giliran model bukan bukti bahwa acceptance criteria terpenuhi.");
       break;
     case "desktop.autonomous_accepted":
@@ -937,6 +938,11 @@ api.onAgentEvent((event) => {
       appendActivity("Agent mulai bekerja", payload.instruction || "");
       break;
     case "desktop.turn_finished":
+      const verificationButton = $(".autonomous-verification-card button");
+      if (verificationButton) {
+        verificationButton.disabled = false;
+        verificationButton.textContent = "Saya sudah memeriksa hasil";
+      }
       setAgentStatus("Session siap");
       refreshFiles();
       refreshGitStatus();

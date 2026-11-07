@@ -162,6 +162,68 @@ function showProviderSelection(payload) {
   $("#chat-feed").scrollTop = $("#chat-feed").scrollHeight;
 }
 
+function showAutonomousPlan(payload) {
+  const plan = String(payload.plan ?? "").trim();
+  if (!plan) return;
+  $(".autonomous-plan-card")?.remove();
+  const card = document.createElement("section");
+  card.className = "autonomous-plan-card";
+  const heading = document.createElement("div");
+  heading.className = "autonomous-plan-heading";
+  heading.textContent = "Rencana autonomous siap ditinjau";
+  const summary = document.createElement("p");
+  summary.className = "autonomous-plan-summary";
+  summary.textContent = "Fase perencanaan bersifat read-only. Perubahan kode belum dijalankan. Periksa lingkup dan langkah sebelum menyetujui implementasi.";
+  const content = document.createElement("pre");
+  content.className = "autonomous-plan-content";
+  content.textContent = plan;
+  const fingerprint = document.createElement("div");
+  fingerprint.className = "autonomous-plan-fingerprint";
+  fingerprint.textContent = payload.planSha256 ? "SHA-256: " + payload.planSha256 : "";
+  const actions = document.createElement("div");
+  actions.className = "autonomous-plan-actions";
+  const approve = document.createElement("button");
+  approve.className = "button primary";
+  approve.type = "button";
+  approve.textContent = "Setujui rencana & mulai implementasi";
+  const reject = document.createElement("button");
+  reject.className = "button secondary";
+  reject.type = "button";
+  reject.textContent = "Tolak rencana";
+  approve.addEventListener("click", async () => {
+    approve.disabled = true;
+    reject.disabled = true;
+    setAgentStatus("Implementasi berjalan…", "busy");
+    appendActivity("Rencana disetujui", "Implementasi dimulai. Persetujuan per tool dan batasan keamanan tetap berlaku.");
+    try {
+      await api.approveAutonomousPlan();
+    } catch (error) {
+      appendMessage("system", "Implementasi tidak dapat dilanjutkan: " + error.message, "error");
+      setAgentStatus("Implementasi terhenti", "error");
+      approve.disabled = false;
+      reject.disabled = false;
+    }
+  });
+  reject.addEventListener("click", async () => {
+    approve.disabled = true;
+    reject.disabled = true;
+    try {
+      await api.rejectAutonomousPlan();
+      card.remove();
+      appendMessage("system", "Rencana ditolak. WTAgent tidak menjalankan implementasi dari rencana ini.", "notice");
+      setAgentStatus("Rencana ditolak");
+    } catch (error) {
+      appendMessage("system", "Rencana belum dapat ditolak: " + error.message, "error");
+      approve.disabled = false;
+      reject.disabled = false;
+    }
+  });
+  actions.append(approve, reject);
+  card.append(heading, summary, content, fingerprint, actions);
+  $("#chat-feed").append(card);
+  $("#chat-feed").scrollTop = $("#chat-feed").scrollHeight;
+}
+
 function showApproval(payload) {
   const card = document.createElement("div");
   card.className = "approval-card";
@@ -671,6 +733,7 @@ function buildWorkflowInstruction(promptText) {
   if (mode === "plan") {
     return "WORKFLOW: PLAN ONLY\nInspect the project and relevant files, then produce a concise implementation plan with affected files, dependencies, risks, and verification steps. Do not edit, create, delete, or execute project files. Wait for the user's approval before implementation.\n\nUSER REQUEST:\n" + promptText;
   }
+  if (mode === "autonomous") return promptText;
   if (mode === "verify") {
     return "WORKFLOW: PLAN, IMPLEMENT, AND VERIFY\nFirst inspect the relevant project structure and state a concise plan. Then implement the requested change across all necessary files. Run the most relevant tests, type checks, lint/build commands available in this project, inspect the final diff, and report exactly what passed or failed. Do not claim tests passed unless you ran them. Preserve existing user changes and ask for approval for sensitive tool actions.\n\nUSER REQUEST:\n" + promptText;
   }
@@ -784,9 +847,28 @@ api.onAgentEvent((event) => {
       $("#provider-select").disabled = true;
       $("#generation-select").disabled = true;
       if (payload.provider) $("#provider-select").value = payload.provider;
+      if (payload.workflowMode) $("#agent-mode").value = payload.workflowMode;
       appendActivity(payload.resumed ? "Sesi dipulihkan" : "Session dimulai", payload.sessionId);
+      if (payload.autonomousWorkflow?.phase === "awaiting_approval") showAutonomousPlan(payload.autonomousWorkflow);
+      if (payload.autonomousWorkflow?.phase === "plan_failed") appendMessage("system", payload.autonomousWorkflow.lastError || "Rencana autonomous gagal dibuat. Kirim ulang tugas untuk mencoba lagi.", "error");
       if (payload.recoveryRequired) appendMessage("system", "Sesi memiliki operasi browser yang statusnya belum pasti. WTAgent akan melakukan bare recovery terlebih dahulu; jangan mengirim ulang instruksi yang sama sebelum proses ini selesai.", "notice");
       persistChat();
+      break;
+    case "desktop.plan_ready":
+      showAutonomousPlan(payload);
+      appendActivity("Rencana autonomous tersimpan", "Workspace belum diubah oleh fase perencanaan.");
+      break;
+    case "desktop.plan_failed":
+      appendMessage("system", payload.message || "Rencana autonomous gagal dibuat.", "error");
+      break;
+    case "desktop.plan_approved":
+      appendActivity("Persetujuan rencana dicatat", "Implementasi berjalan dengan persetujuan tool normal.");
+      break;
+    case "desktop.plan_rejected":
+      appendActivity("Rencana ditolak", "Tidak ada implementasi dijalankan dari rencana ini.");
+      break;
+    case "desktop.autonomous_completed":
+      appendActivity("Autonomous workflow selesai", "Agent menyelesaikan langkah implementasi dan mengirim ringkasan hasil.");
       break;
     case "desktop.turn_started":
       setAgentStatus("Memproses tugas…", "busy");

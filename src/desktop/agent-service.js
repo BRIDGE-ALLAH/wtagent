@@ -22,6 +22,16 @@ import {
 import { resolveLimits } from "../shared/limits.js";
 import { extractAtMentions } from "../cli/at-files.js";
 import { assertNativeRuntimeSupported } from "../platform/windows-diagnostics.js";
+import {
+  approveAutonomousWorkflow,
+  buildApprovedImplementationInstruction,
+  buildAutonomousPlanningInstruction,
+  createAutonomousWorkflow,
+  normalizeWorkflowMode,
+  rejectAutonomousWorkflow,
+  shouldEnforceReadOnlyPolicy,
+  storeAutonomousPlan,
+} from "./autonomous-workflow.js";
 
 function emitSafely(callback, event) {
   try {
@@ -46,6 +56,7 @@ export class DesktopAgentService {
     this.providerSelectionResolver = null;
     this.providerSelectionDone = false;
     this.workflowMode = "agent";
+    this.autonomousWorkflow = null;
     this.running = false;
     this.closed = false;
   }
@@ -59,16 +70,45 @@ export class DesktopAgentService {
     });
   }
 
-  #forwardRuntimeEvent(event) {
-    if (!event || typeof event.type !== "string") return;
-    // Raw protocol responses can contain large payloads. The desktop UI uses
-    // parsed progress and final messages instead of rendering protocol XML.
-    if (event.type === "model.streaming") return;
+  async #forwardRuntimeEvent(event) {
+    if (!event || typeof event.type !== "string" || event.type === "model.streaming") return;
     const payload = { ...(event.payload ?? {}) };
     delete payload.raw;
     if (typeof payload.output === "string") payload.output = payload.output.slice(0, 12_000);
     if (typeof payload.stdout === "string") payload.stdout = payload.stdout.slice(-8_000);
     if (typeof payload.stderr === "string") payload.stderr = payload.stderr.slice(-8_000);
+
+    if (event.type === "run.completed" && this.workflowMode === "autonomous") {
+      if (this.autonomousWorkflow?.phase === "planning") {
+        try {
+          this.autonomousWorkflow = storeAutonomousPlan(this.autonomousWorkflow, payload.message);
+          await this.session.update({ autonomousWorkflow: this.autonomousWorkflow });
+          this.#emit("desktop.plan_ready", {
+            plan: this.autonomousWorkflow.plan,
+            planSha256: this.autonomousWorkflow.planSha256,
+            plannedAt: this.autonomousWorkflow.plannedAt,
+            task: this.autonomousWorkflow.task,
+          });
+        } catch (error) {
+          this.autonomousWorkflow = { ...this.autonomousWorkflow, phase: "plan_failed", lastError: error.message };
+          await this.session.update({ autonomousWorkflow: this.autonomousWorkflow });
+          this.#emit("desktop.plan_failed", { message: error.message || "Agent belum menghasilkan rencana yang dapat ditinjau." });
+        }
+      } else if (this.autonomousWorkflow?.phase === "implementing") {
+        this.autonomousWorkflow = {
+          ...this.autonomousWorkflow,
+          phase: "completed",
+          completedAt: new Date().toISOString(),
+          lastError: null,
+        };
+        await this.session.update({ autonomousWorkflow: this.autonomousWorkflow });
+        this.#emit("desktop.autonomous_completed", {
+          completedAt: this.autonomousWorkflow.completedAt,
+          planSha256: this.autonomousWorkflow.planSha256,
+        });
+      }
+    }
+
     emitSafely(this.onEvent, {
       type: event.type,
       sessionId: event.sessionId ?? this.session?.sessionId ?? null,
@@ -86,29 +126,41 @@ export class DesktopAgentService {
     if (!stat.isDirectory()) throw new Error("Pilih folder proyek yang valid.");
     const provider = resolveProvider(model);
     const resolvedType = validateGenerationType(generationType, provider.id);
+    const userInstruction = String(instruction ?? "").trim();
+    this.workflowMode = normalizeWorkflowMode(workflowMode);
+    if (this.workflowMode === "autonomous" && resolvedType !== "agent") {
+      throw new Error("Autonomous coding workflow hanya tersedia untuk tugas agent, bukan generasi media.");
+    }
+    this.autonomousWorkflow = this.workflowMode === "autonomous"
+      ? createAutonomousWorkflow(userInstruction)
+      : null;
     const appDataDir = path.resolve(getAppDataDir());
     const sessionsDir = getSessionsDir(appDataDir);
     await ensureDirectory(sessionsDir);
 
     this.provider = provider;
-    this.workflowMode = ["plan", "verify"].includes(workflowMode) ? workflowMode : "agent";
     this.session = await AgentSession.create({
       sessionsDir,
-      task: String(instruction ?? "").trim(),
+      task: userInstruction,
       projectRoot: root,
       provider: provider.id,
       mode: null,
       generationType: resolvedType,
     });
-    await this.session.update({ desktopWorkflowMode: this.workflowMode });
+    await this.session.update({
+      desktopWorkflowMode: this.workflowMode,
+      autonomousWorkflow: this.autonomousWorkflow,
+    });
     this.#initializeRuntimeParts(appDataDir, resolvedType);
     this.#emit("desktop.session_started", {
       sessionId: this.session.sessionId,
       projectRoot: root,
       provider: provider.id,
+      workflowMode: this.workflowMode,
+      autonomousWorkflow: this.autonomousWorkflow,
     });
 
-    const attachmentResult = await extractAtMentions(instruction, root);
+    const attachmentResult = await extractAtMentions(userInstruction, root);
     if (attachmentResult.missing.length) {
       this.#emit("desktop.notice", {
         message: "Beberapa lampiran @path tidak ditemukan.",
@@ -117,7 +169,10 @@ export class DesktopAgentService {
     }
     return await this.#runTurn({
       resume: false,
-      instruction: String(instruction ?? "").trim(),
+      instruction: this.workflowMode === "autonomous"
+        ? buildAutonomousPlanningInstruction(userInstruction)
+        : userInstruction,
+      displayInstruction: userInstruction,
       files: attachmentResult.files,
     });
   }
@@ -139,6 +194,7 @@ export class DesktopAgentService {
       lastError: state.lastError || null,
       recoveryRequired: Boolean(state.pendingOutbound || state.pendingAssistantTurn),
       workflowMode: state.desktopWorkflowMode || "agent",
+      autonomousPhase: state.autonomousWorkflow?.phase ?? null,
     }));
   }
 
@@ -156,10 +212,21 @@ export class DesktopAgentService {
     const generationType = validateGenerationType(session.state.generationType || "agent", provider.id);
     this.provider = provider;
     this.session = session;
-    this.workflowMode = ["plan", "verify"].includes(workflowMode)
-      ? workflowMode
-      : (["plan", "verify"].includes(session.state.desktopWorkflowMode) ? session.state.desktopWorkflowMode : "agent");
-    await session.update({ desktopWorkflowMode: this.workflowMode });
+    this.workflowMode = normalizeWorkflowMode(workflowMode ?? session.state.desktopWorkflowMode);
+    this.autonomousWorkflow = session.state.autonomousWorkflow ?? null;
+    const text = String(instruction ?? "").trim();
+    const pendingRecovery = Boolean(session.state.pendingOutbound || session.state.pendingAssistantTurn);
+    if (this.autonomousWorkflow?.phase === "awaiting_approval" && text) {
+      throw new Error("Tinjau, setujui, atau tolak rencana autonomous sebelum mengirim instruksi baru.");
+    }
+    if (this.workflowMode === "autonomous" && text) {
+      if (generationType !== "agent") throw new Error("Autonomous coding workflow hanya tersedia untuk tugas agent.");
+      this.autonomousWorkflow = createAutonomousWorkflow(text);
+    }
+    await session.update({
+      desktopWorkflowMode: this.workflowMode,
+      autonomousWorkflow: this.autonomousWorkflow,
+    });
     if (["initializing", "running", "waiting_model", "auth_required"].includes(session.state.phase)) {
       await session.update({ phase: "interrupted" });
     }
@@ -169,10 +236,18 @@ export class DesktopAgentService {
       projectRoot,
       provider: provider.id,
       resumed: true,
-      recoveryRequired: Boolean(session.state.pendingOutbound || session.state.pendingAssistantTurn),
+      workflowMode: this.workflowMode,
+      autonomousWorkflow: this.autonomousWorkflow,
+      recoveryRequired: pendingRecovery,
     });
 
-    const text = String(instruction ?? "").trim();
+    if (this.autonomousWorkflow?.phase === "awaiting_approval" && !text) {
+      return { sessionId: session.sessionId, awaitingApproval: true, autonomousWorkflow: this.autonomousWorkflow };
+    }
+    if (["rejected", "completed", "plan_failed"].includes(this.autonomousWorkflow?.phase) && !text && !pendingRecovery) {
+      return { sessionId: session.sessionId, autonomousWorkflow: this.autonomousWorkflow };
+    }
+
     const attachmentResult = text
       ? await extractAtMentions(text, projectRoot)
       : { files: [], missing: [] };
@@ -185,7 +260,10 @@ export class DesktopAgentService {
     if (text) await session.appendInstruction(text, { files: attachmentResult.files });
     return await this.#runTurn({
       resume: true,
-      instruction: text,
+      instruction: this.workflowMode === "autonomous" && text
+        ? buildAutonomousPlanningInstruction(text)
+        : text,
+      displayInstruction: text,
       files: attachmentResult.files,
     });
   }
@@ -267,12 +345,17 @@ export class DesktopAgentService {
     const basePolicy = new PolicyEngine({ store: this.approvalStore });
     const policy = {
       evaluate: async (toolCall, context) => {
-        if (this.workflowMode === "plan") {
+        if (shouldEnforceReadOnlyPolicy({
+          workflowMode: this.workflowMode,
+          autonomousWorkflow: this.autonomousWorkflow,
+        })) {
           const definition = registry.list().find((tool) => tool.name === toolCall.name);
           if (definition && definition.risk !== "read") {
             return {
               action: "deny",
-              reasons: ["Plan-only mode: tool " + toolCall.name + " is disabled because it may change files or execute commands."],
+              reasons: [this.workflowMode === "autonomous"
+                ? "Autonomous planning phase: tool " + toolCall.name + " is blocked until the user approves the plan."
+                : "Plan-only mode: tool " + toolCall.name + " is disabled because it may change files or execute commands."],
               grants: { allowOutside: false },
             };
           }
@@ -299,10 +382,10 @@ export class DesktopAgentService {
     });
   }
 
-  async #runTurn({ resume, instruction, files = [] }) {
+  async #runTurn({ resume, instruction, files = [], displayInstruction = instruction }) {
     if (this.running) throw new Error("Agent sedang memproses tugas sebelumnya.");
     this.running = true;
-    this.#emit("desktop.turn_started", { instruction });
+    this.#emit("desktop.turn_started", { instruction: displayInstruction, workflowMode: this.workflowMode });
     try {
       const runtime = await this.#buildRuntime();
       const result = await runtime.run({
@@ -319,15 +402,9 @@ export class DesktopAgentService {
       return result;
     } catch (error) {
       if (this.session?.state?.phase !== "idle") {
-        await this.session.update({
-          phase: "interrupted",
-          lastError: error.message,
-        }).catch(() => {});
+        await this.session.update({ phase: "interrupted", lastError: error.message }).catch(() => {});
       }
-      this.#emit("desktop.agent_error", {
-        message: error.message,
-        code: error.code ?? null,
-      });
+      this.#emit("desktop.agent_error", { message: error.message, code: error.code ?? null });
       throw error;
     } finally {
       this.running = false;
@@ -339,18 +416,60 @@ export class DesktopAgentService {
     if (this.running) throw new Error("Agent masih memproses tugas sebelumnya.");
     const text = String(instruction ?? "").trim();
     if (!text) throw new Error("Instruksi tidak boleh kosong.");
-    this.workflowMode = ["plan", "verify"].includes(workflowMode) ? workflowMode : "agent";
-    await this.session.update({ desktopWorkflowMode: this.workflowMode });
+    if (this.session.state.autonomousWorkflow?.phase === "awaiting_approval") {
+      throw new Error("Tinjau, setujui, atau tolak rencana autonomous sebelum mengirim instruksi baru.");
+    }
+    this.workflowMode = normalizeWorkflowMode(workflowMode);
+    if (this.workflowMode === "autonomous" && this.session.state.generationType !== "agent") {
+      throw new Error("Autonomous coding workflow hanya tersedia untuk tugas agent.");
+    }
+    this.autonomousWorkflow = this.workflowMode === "autonomous" ? createAutonomousWorkflow(text) : null;
+    await this.session.update({
+      desktopWorkflowMode: this.workflowMode,
+      autonomousWorkflow: this.autonomousWorkflow,
+    });
     const { files, missing } = await extractAtMentions(text, this.session.state.projectRoot);
     if (missing.length) {
-      this.#emit("desktop.notice", {
-        message: "Beberapa lampiran @path tidak ditemukan.",
-        details: missing,
-      });
+      this.#emit("desktop.notice", { message: "Beberapa lampiran @path tidak ditemukan.", details: missing });
     }
     await this.session.appendInstruction(text, { files });
-    return await this.#runTurn({ resume: true, instruction: text, files });
+    return await this.#runTurn({
+      resume: true,
+      instruction: this.workflowMode === "autonomous" ? buildAutonomousPlanningInstruction(text) : text,
+      displayInstruction: text,
+      files,
+    });
   }
+
+  async approveAutonomousPlan() {
+    if (!this.session) throw new Error("Tidak ada sesi agent aktif.");
+    if (this.running) throw new Error("Agent masih memproses tugas.");
+    const approved = approveAutonomousWorkflow(this.session.state.autonomousWorkflow ?? this.autonomousWorkflow);
+    this.workflowMode = "autonomous";
+    this.autonomousWorkflow = approved;
+    await this.session.update({ desktopWorkflowMode: "autonomous", autonomousWorkflow: approved });
+    const instruction = buildApprovedImplementationInstruction(approved);
+    await this.session.appendInstruction(instruction);
+    this.#emit("desktop.plan_approved", { approvedAt: approved.approvedAt, planSha256: approved.planSha256 });
+    return await this.#runTurn({
+      resume: true,
+      instruction,
+      displayInstruction: "Implementasi dimulai untuk rencana yang telah disetujui: " + approved.task,
+      files: [],
+    });
+  }
+
+  async rejectAutonomousPlan() {
+    if (!this.session) throw new Error("Tidak ada sesi agent aktif.");
+    if (this.running) throw new Error("Agent masih memproses tugas.");
+    const rejected = rejectAutonomousWorkflow(this.session.state.autonomousWorkflow ?? this.autonomousWorkflow);
+    this.workflowMode = "autonomous";
+    this.autonomousWorkflow = rejected;
+    await this.session.update({ desktopWorkflowMode: "autonomous", autonomousWorkflow: rejected });
+    this.#emit("desktop.plan_rejected", { rejectedAt: rejected.rejectedAt, planSha256: rejected.planSha256 });
+    return true;
+  }
+
 
   cancel() {
     if (!this.adapter || !this.running) return false;

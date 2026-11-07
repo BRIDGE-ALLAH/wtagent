@@ -41,7 +41,8 @@ Build output is written to `desktop/dist/`. macOS distribution signing/notarizat
 - Workspace folder picker, explorer, Monaco editor, file save, and nested file creation (`Ctrl/Cmd+S`)
 - Persistent shell process for sequential commands (`Ctrl/Cmd+J` toggles the panel); background servers can be launched with the host shell’s background command
 - AI chat wired to WTAgent's existing `AgentRuntime`, with per-action approval controls
-- Workflow modes: **Agent**, **Plan only**, and **Build & verify**. Plan only denies non-read-only tools in the runtime policy; Build & verify asks the model to inspect, plan, implement, run relevant checks, and review the diff.
+- Workflow modes: **Agent**, **Plan only**, **Build & verify**, and **Autonomous**. Autonomous inspects the workspace under a hard read-only runtime policy, stores a bounded plan with a SHA-256 integrity hash, and pauses for an explicit **Approve plan** or **Reject plan** decision. Approval starts implementation in a second model turn; normal per-tool approvals remain active. Plan and decision state are persisted in the WTAgent session and restored after restart.
+- Autonomous implementation asks the agent to re-check workspace/Git state, preserve unrelated user changes, run relevant verification, inspect the final diff, and report only checks actually run. It does not push, publish, release, deploy, or bypass normal tool approvals.
 - Git source control: current branch, changed-file list, staged/unstaged diff, stage/unstage, create/switch branch, and local commit
 - Saved WTAgent session list, session resume/recovery, and locally persisted chat activity display
 - Provider manager for all supported web providers, profile-folder status/open, default provider, and a local note for a preferred model
@@ -55,4 +56,5 @@ Build output is written to `desktop/dist/`. macOS distribution signing/notarizat
 - Plan only restricts WTAgent tools whose declared risk is not read-only. It cannot prevent a user from changing files manually in the editor or terminal outside the agent.
 - The editor currently opens text files up to 2 MB.
 - WTAgent session state, provider browser profiles, and desktop UI preferences are stored locally under Electron's user-data directory. A resumed session may need the provider browser to reconnect or authenticate.
+- Plan approval is a scope checkpoint, not a guarantee that a proposed change is correct. Review the plan, monitor per-tool approvals, and inspect the final Git diff before accepting the result.
 - Exercise the app with a disposable project before relying on it for important work. Review approval prompts before allowing agent file or process operations.

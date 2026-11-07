@@ -267,6 +267,11 @@ function registerIpc() {
     return { ok: true, result: await agentService.send(instruction, workflowMode) };
   });
   ipcMain.handle("agent:approval", async (_event, args) => agentService?.respondApproval(args.requestId, args.choice) ?? false);
+  ipcMain.handle("agent:approve-plan", async () => {
+    if (!agentService) throw new Error("Agent belum dimulai.");
+    return { ok: true, result: await agentService.approveAutonomousPlan() };
+  });
+  ipcMain.handle("agent:reject-plan", async () => agentService?.rejectAutonomousPlan() ?? false);
   ipcMain.handle("agent:continue-provider", async () => {
     agentService?.continueProviderSelection();
     return true;

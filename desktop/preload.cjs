@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld("wtagent", {
   resetAgent: () => ipcRenderer.invoke("agent:reset"),
   sendAgent: (instruction, workflowMode) => ipcRenderer.invoke("agent:send", { instruction, workflowMode }),
   respondApproval: (requestId, choice) => ipcRenderer.invoke("agent:approval", { requestId, choice }),
+  approveAutonomousPlan: () => ipcRenderer.invoke("agent:approve-plan"),
+  rejectAutonomousPlan: () => ipcRenderer.invoke("agent:reject-plan"),
   continueProviderSelection: () => ipcRenderer.invoke("agent:continue-provider"),
   cancelAgent: () => ipcRenderer.invoke("agent:cancel"),
   startTerminal: (workspace, shell) => ipcRenderer.invoke("terminal:start", { workspace, shell }),

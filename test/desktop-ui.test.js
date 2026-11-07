@@ -44,14 +44,18 @@ test("desktop workflows include safe plan-only enforcement and real session reco
     read("src/desktop/agent-service.js"),
     read("desktop/renderer.js"),
   ]);
-  assert.match(service, /workflowMode === "plan"/);
+  assert.match(service, /shouldEnforceReadOnlyPolicy/);
   assert.match(service, /definition\.risk !== "read"/);
+  assert.match(service, /approveAutonomousPlan/);
+  assert.match(service, /rejectAutonomousPlan/);
   assert.match(service, /action: "deny"/);
   assert.match(service, /AgentSession\.load/);
   assert.match(service, /async listSessions/);
   assert.match(service, /resume: true/);
   assert.match(renderer, /WORKFLOW: PLAN ONLY/);
   assert.match(renderer, /WORKFLOW: PLAN, IMPLEMENT, AND VERIFY/);
+  assert.match(renderer, /showAutonomousPlan/);
+  assert.match(html, /value="autonomous"/);
 });
 
 test("Git, provider profiles, and persistent terminal are connected end to end", async () => {
@@ -65,7 +69,7 @@ test("Git, provider profiles, and persistent terminal are connected end to end",
     "terminal:start", "terminal:write", "terminal:stop",
     "git:status", "git:diff", "git:stage", "git:stage-all", "git:commit", "git:checkout",
     "provider:profiles", "provider:open-profile",
-    "agent:sessions", "agent:resume",
+    "agent:sessions", "agent:resume", "agent:approve-plan", "agent:reject-plan",
   ]) {
     assert.match(main, new RegExp('ipcMain\\.handle\\("' + channel + '"'));
     assert.match(preload, new RegExp('ipcRenderer\\.invoke\\("' + channel + '"'));

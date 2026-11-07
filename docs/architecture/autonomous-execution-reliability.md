@@ -6,7 +6,7 @@ WTAgent's autonomous workflow is a staged engineering process, not a model-respo
 
 ## Current state contract
 
-`planning -> awaiting_approval -> implementing -> verification_required`
+`planning -> awaiting_approval -> implementing -> verification_required -> accepted`
 
 - `planning`: read-only tools only.
 - `awaiting_approval`: a bounded plan is persisted with a SHA-256 checksum.

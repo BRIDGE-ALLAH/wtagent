@@ -105,3 +105,10 @@ test("autonomous implementation cannot be reported complete without a verificati
   assert.match(workflow, /phase: "verification_required"/);
   assert.match(workflow, /completedAt: null/);
 });
+
+ 
+test("pending verification cannot be bypassed by sending a new autonomous task", async () => {
+  const service = await read("src/desktop/agent-service.js");
+  assert.match(service, /autonomousWorkflow\?\.phase === "verification_required" && text/);
+  assert.match(service, /Periksa dan terima hasil autonomous yang tertunda/);
+});

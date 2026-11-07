@@ -19,7 +19,7 @@ async function fixture(t, scripts = { test: "node scripts/run-tests.js", check: 
   await fs.writeFile(path.join(root, "scripts", "run-tests.js"), "process.exit(0);");
   await fs.writeFile(path.join(root, "scripts", "check-syntax.js"), "process.exit(0);");
   t.after(() => fs.rm(root, { recursive: true, force: true }));
-  return root;
+  return await fs.realpath(root);
 }
 
 function fakeChild(pid = 1234) {

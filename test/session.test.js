@@ -493,6 +493,8 @@ test("a state lock owns a majority of its recorded mutex ports", async (t) => {
   const lockPath = path.join(session.directory, ".wtagent-state.lock");
   const lock = JSON.parse(await fs.readFile(lockPath, "utf8"));
   assert.equal(lock.mutexPorts.length, 5);
+  assert.ok(lock.mutexPorts.every((port) => port >= 20_000 && port < 32_000),
+    "session mutex ports must avoid default Windows dynamic/excluded TCP ports");
   assert.equal(lock.heldMutexPorts.length, 3);
   const heldPort = lock.heldMutexPorts[0];
   const contender = net.createServer();

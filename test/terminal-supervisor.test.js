@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { EventEmitter } from "node:events";
-import { stopTerminalProcess, writeTerminalInput } from "../desktop/terminal-supervisor.cjs";
+import supervisor from "../desktop/terminal-supervisor.cjs";
+const { stopTerminalProcess, writeTerminalInput } = supervisor;
 
 function terminalFixture() {
   const child = new EventEmitter();

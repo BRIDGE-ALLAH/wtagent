@@ -25,7 +25,7 @@ function makeManager(options = {}) {
     },
     killProcessTreeImpl: async (pid, signal) => {
       killCalls.push({ pid, signal });
-      options.kill?.(children[pid - 1000], signal, killCalls.length);
+      return options.kill?.(children[pid - 1000], signal, killCalls.length);
     },
     ...options.managerOptions,
   });

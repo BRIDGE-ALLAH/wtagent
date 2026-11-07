@@ -626,6 +626,8 @@ export function recordAutonomousMachineVerification(workflow, result, now = new 
     verificationCompletedAt: result?.finishedAt ?? now,
     machineVerification: {
       status: policyBlocked ? "policy_denied" : String(result?.status ?? "unavailable"),
+      manifestSha256: result?.manifestSha256 ?? null,
+      baselineIntegrityFileCount: result?.baselineIntegrityFileCount ?? 0,
       durationMs: Number.isFinite(result?.durationMs) ? result.durationMs : null,
       reason: workflow.repairBlockedReason ?? result?.reason ?? null,
       checks,

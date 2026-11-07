@@ -40,9 +40,10 @@ test("every preload IPC invocation has a registered main-process handler", async
 });
 
 test("desktop workflows include safe plan-only enforcement and real session recovery", async () => {
-  const [service, renderer] = await Promise.all([
+  const [service, renderer, html] = await Promise.all([
     read("src/desktop/agent-service.js"),
     read("desktop/renderer.js"),
+    read("desktop/index.html"),
   ]);
   assert.match(service, /shouldEnforceReadOnlyPolicy/);
   assert.match(service, /definition\.risk !== "read"/);

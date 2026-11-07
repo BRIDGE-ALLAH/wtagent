@@ -862,9 +862,11 @@ api.onAgentEvent((event) => {
       appendMessage("system", payload.message || "Rencana autonomous gagal dibuat.", "error");
       break;
     case "desktop.plan_approved":
+      $(".autonomous-plan-card")?.remove();
       appendActivity("Persetujuan rencana dicatat", "Implementasi berjalan dengan persetujuan tool normal.");
       break;
     case "desktop.plan_rejected":
+      $(".autonomous-plan-card")?.remove();
       appendActivity("Rencana ditolak", "Tidak ada implementasi dijalankan dari rencana ini.");
       break;
     case "desktop.autonomous_completed":

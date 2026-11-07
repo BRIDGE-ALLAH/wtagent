@@ -157,26 +157,22 @@ test("trusted verification rejects baseline test tampering before executing chec
   assert.match(result.reason, /changed after planning/);
 });
 
-test("trusted verification uses frozen script descriptors when package.json scripts change", async (t) => {
+test("trusted verification rejects package script changes after planning", async (t) => {
   const root = await fixture(t, { test: "node scripts/run-tests.js" });
   const plan = await resolveAutonomousChecks({ workspace: root });
   await fs.writeFile(path.join(root, "package.json"), JSON.stringify({
     scripts: { test: "node scripts/skip-tests.js" },
   }));
-  let launchedPath = null;
+  let spawned = false;
   const result = await runAutonomousVerification({
     workspace: root,
     verificationPlan: plan,
     requireTrustedPlan: true,
-    spawnImpl: (_program, args) => {
-      launchedPath = args[0];
-      const child = fakeChild();
-      setImmediate(() => child.emit("close", 0, null));
-      return child;
-    },
+    spawnImpl: () => { spawned = true; return fakeChild(); },
   });
-  assert.equal(result.status, "passed");
-  assert.equal(launchedPath, path.join(root, "scripts", "run-tests.js"));
+  assert.equal(result.status, "integrity_failed");
+  assert.equal(spawned, false);
+  assert.match(result.reason, /package.json/);
 });
 
 test("autonomous service cannot verify from a post-implementation manifest alone", async (t) => {

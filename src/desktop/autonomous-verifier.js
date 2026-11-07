@@ -452,8 +452,62 @@ export async function runAutonomousVerification({
   totalBudgetMs = DEFAULT_TOTAL_BUDGET_MS,
   timeoutOverrides = {},
   checkIds = null,
+  verificationPlan = null,
+  requireTrustedPlan = false,
 } = {}) {
-  const resolved = await resolveAutonomousChecks({ workspace });
+  let workspaceRoot;
+  try {
+    workspaceRoot = await fs.realpath(path.resolve(String(workspace ?? "")));
+  } catch (error) {
+    return {
+      status: "unavailable",
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      checks: [],
+      unsupported: [],
+      reason: error.message,
+    };
+  }
+
+  if (requireTrustedPlan && !verificationPlan) {
+    return {
+      status: "unavailable",
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      checks: [],
+      unsupported: [],
+      reason: "No verification plan was captured before implementation; current project commands are not trusted.",
+    };
+  }
+
+  const resolved = verificationPlan ?? await resolveAutonomousChecks({ workspace: workspaceRoot });
+  if (resolved.workspaceRoot !== workspaceRoot) {
+    return {
+      status: "unavailable",
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      checks: [],
+      unsupported: [],
+      manifestSha256: resolved.manifestSha256 ?? null,
+      reason: "The trusted verification plan belongs to a different workspace.",
+    };
+  }
+
+  const integrityError = await verifyAutonomousVerificationPlan(workspaceRoot, resolved);
+  if (integrityError) {
+    const failure = unsupported("verification:integrity", integrityError);
+    return {
+      status: "integrity_failed",
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      checks: [],
+      unsupported: [...(resolved.unsupported ?? []), failure],
+      manifestSha256: resolved.manifestSha256 ?? null,
+      baselineIntegrityFileCount: resolved.integrityFiles?.length ?? 0,
+      reason: integrityError,
+    };
+  }
+
   const selectedChecks = Array.isArray(checkIds)
     ? resolved.checks.filter((check) => checkIds.includes(check.id))
     : resolved.checks;
@@ -463,9 +517,10 @@ export async function runAutonomousVerification({
       startedAt: new Date().toISOString(),
       finishedAt: new Date().toISOString(),
       checks: [],
-      unsupported: resolved.unsupported,
+      unsupported: resolved.unsupported ?? [],
       manifestSha256: resolved.manifestSha256 ?? null,
-      reason: resolved.reason,
+      baselineIntegrityFileCount: resolved.integrityFiles?.length ?? 0,
+      reason: resolved.reason ?? "No trusted verification checks were selected.",
     };
   }
 
@@ -519,15 +574,16 @@ export async function runAutonomousVerification({
     completionKnown: false,
     reason: "A previous verification process did not terminate with confirmed completion.",
   }));
-  const allChecks = [...results, ...skipped, ...resolved.unsupported];
-  const passed = resolved.unsupported.length === 0
+  const allChecks = [...results, ...skipped, ...(resolved.unsupported ?? [])];
+  const passed = (resolved.unsupported ?? []).length === 0
     && results.length === selectedChecks.length
     && results.every((item) => item.status === "passed" && item.exitCode === 0 && item.completionKnown);
   let status = passed
     ? "passed"
     : allChecks.some((item) => item.status === "timed_out") ? "timed_out"
-      : resolved.unsupported.length ? "unsupported" : "failed";
+      : (resolved.unsupported ?? []).length ? "unsupported" : "failed";
   let reason = passed ? null : resolved.reason ?? "One or more required checks did not produce confirmed successful exit evidence.";
+
   const postRunIntegrityError = await verifyAutonomousVerificationPlan(workspaceRoot, resolved);
   if (postRunIntegrityError) {
     status = "integrity_failed";
@@ -541,35 +597,13 @@ export async function runAutonomousVerification({
     finishedAt: new Date().toISOString(),
     durationMs: Date.now() - started,
     checks: allChecks,
-    unsupported: resolved.unsupported,
+    unsupported: resolved.unsupported ?? [],
     manifestSha256: resolved.manifestSha256 ?? null,
     baselineIntegrityFileCount: resolved.integrityFiles?.length ?? 0,
     reason,
   };
 }
 
-
-export function mergeAutonomousVerificationResults(previous, current) {
-  const merged = new Map();
-  for (const check of previous?.checks ?? []) merged.set(check.id, check);
-  for (const check of current?.checks ?? []) merged.set(check.id, check);
-  const checks = [...merged.values()];
-  const unsupported = current?.unsupported ?? previous?.unsupported ?? [];
-  const allPassed = checks.length > 0
-    && unsupported.length === 0
-    && checks.every((check) => check.status === "passed" && check.exitCode === 0 && check.completionKnown === true);
-  let status = current?.status ?? "unavailable";
-  if (allPassed) status = "passed";
-  else if (unsupported.length) status = "unsupported";
-  else if (status === "passed") status = "failed";
-  return {
-    ...current,
-    status,
-    checks,
-    unsupported,
-    reason: allPassed ? null : current?.reason ?? previous?.reason ?? "One or more required checks remain unsuccessful.",
-  };
-}
 
 export function recordAutonomousMachineVerification(workflow, result, now = new Date().toISOString()) {
   if (!workflow || workflow.version !== 1 || workflow.phase !== "implementing") {

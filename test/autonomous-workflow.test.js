@@ -6,6 +6,8 @@ import {
   approveAutonomousWorkflow,
   assertAutonomousPlanApprovable,
   buildApprovedImplementationInstruction,
+  beginAutonomousImplementation,
+  buildAutonomousImplementationInstruction,
   buildAutonomousPlanningInstruction,
   createAutonomousWorkflow,
   normalizeWorkflowMode,
@@ -110,4 +112,17 @@ test("user acceptance is explicit, bounded, and distinct from machine verificati
   assert.equal(accepted.completedAt, null);
   assert.equal(accepted.verificationSummary, "npm test: 42 passed; reviewed final diff.");
   assert.throws(() => acceptAutonomousVerification(accepted, "Already accepted"), /fase verifikasi pengguna/);
+});
+
+test("autonomous plan can advance to implementation without claiming user approval", () => {
+  const planned = storeAutonomousPlan(createAutonomousWorkflow("Add a settings page"), "Verified plan");
+  const started = beginAutonomousImplementation(planned, "2026-11-07T00:01:00.000Z");
+  assert.equal(started.phase, "implementing");
+  assert.equal(started.approvedAt, null);
+  assert.equal(started.implementationStartedAt, "2026-11-07T00:01:00.000Z");
+  assert.throws(() => beginAutonomousImplementation(started), /Rencana tidak valid/);
+  const instruction = buildAutonomousImplementationInstruction(planned);
+  assert.match(instruction, /AUTONOMOUS IMPLEMENTATION/);
+  assert.doesNotMatch(instruction, /user explicitly approved/i);
+  assert.match(instruction, /Never push, publish, release, deploy/);
 });

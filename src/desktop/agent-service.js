@@ -68,6 +68,7 @@ export class DesktopAgentService {
     this.providerSelectionDone = false;
     this.workflowMode = "agent";
     this.autonomousWorkflow = null;
+    this.autonomousVerificationPlan = null;
     this.autonomousDecisionInProgress = false;
     this.workspaceCheckpoint = null;
     this.pendingAutonomousImplementation = null;
@@ -114,6 +115,11 @@ export class DesktopAgentService {
       if (this.autonomousWorkflow?.phase === "planning") {
         try {
           const planned = storeAutonomousPlan(this.autonomousWorkflow, payload.message);
+          const verificationPlan = await resolveAutonomousChecks({
+            workspace: this.session.state.projectRoot,
+            verificationPlan: this.autonomousVerificationPlan ?? this.session.state.autonomousVerificationPlan ?? null,
+            requireTrustedPlan: true,
+          });
           const appDataDir = path.resolve(getAppDataDir());
           const checkpoint = await WorkspaceCheckpoint.create({
             workspace: this.session.state.projectRoot,
@@ -126,6 +132,7 @@ export class DesktopAgentService {
             statePatch: {
               desktopWorkflowMode: "autonomous",
               autonomousWorkflow: implementing,
+              autonomousVerificationPlan: verificationPlan,
               workspaceCheckpoint: {
                 id: checkpoint.id,
                 directory: checkpoint.directory,
@@ -136,6 +143,7 @@ export class DesktopAgentService {
           });
           this.workspaceCheckpoint = checkpoint;
           this.autonomousWorkflow = implementing;
+          this.autonomousVerificationPlan = verificationPlan;
           this.pendingAutonomousImplementation = { instruction, planSha256: implementing.planSha256 };
           await this.session.appendEvent("autonomous.implementation_started", {
             implementationStartedAt: implementing.implementationStartedAt,
@@ -150,8 +158,9 @@ export class DesktopAgentService {
         } catch (error) {
           this.pendingAutonomousImplementation = null;
           this.workspaceCheckpoint = null;
+          this.autonomousVerificationPlan = null;
           this.autonomousWorkflow = { ...this.autonomousWorkflow, phase: "plan_failed", lastError: error.message };
-          await this.session.update({ autonomousWorkflow: this.autonomousWorkflow });
+          await this.session.update({ autonomousWorkflow: this.autonomousWorkflow, autonomousVerificationPlan: null });
           await this.session.appendEvent("autonomous.plan_failed", { message: this.autonomousWorkflow.lastError });
           this.#emit("desktop.plan_failed", { message: error.message || "Agent belum menghasilkan rencana yang dapat ditinjau." });
         }
@@ -160,6 +169,8 @@ export class DesktopAgentService {
         try {
           verification = await runAutonomousVerification({
             workspace: this.session.state.projectRoot,
+            verificationPlan: this.autonomousVerificationPlan ?? this.session.state.autonomousVerificationPlan ?? null,
+            requireTrustedPlan: true,
             checkIds: this.autonomousWorkflow.pendingRepairCheckIds ?? null,
           });
           if (this.autonomousWorkflow.pendingRepairCheckIds) {
@@ -280,6 +291,7 @@ export class DesktopAgentService {
     this.autonomousWorkflow = this.workflowMode === "autonomous"
       ? createAutonomousWorkflow(userInstruction)
       : null;
+    this.autonomousVerificationPlan = null;
     const appDataDir = path.resolve(getAppDataDir());
     const sessionsDir = getSessionsDir(appDataDir);
     await ensureDirectory(sessionsDir);
@@ -296,6 +308,7 @@ export class DesktopAgentService {
     await this.session.update({
       desktopWorkflowMode: this.workflowMode,
       autonomousWorkflow: this.autonomousWorkflow,
+      autonomousVerificationPlan: null,
     });
     this.#initializeRuntimeParts(appDataDir, resolvedType);
     this.#emit("desktop.session_started", {
@@ -376,6 +389,7 @@ export class DesktopAgentService {
     this.session = session;
     this.workflowMode = normalizeWorkflowMode(workflowMode ?? session.state.desktopWorkflowMode);
     this.autonomousWorkflow = session.state.autonomousWorkflow ?? null;
+    this.autonomousVerificationPlan = session.state.autonomousVerificationPlan ?? null;
     const text = String(instruction ?? "").trim();
     const pendingRecovery = recoveryStatus.required;
     if (this.autonomousWorkflow?.phase === "awaiting_approval" && text) {
@@ -387,10 +401,12 @@ export class DesktopAgentService {
     if (this.workflowMode === "autonomous" && text) {
       if (generationType !== "agent") throw new Error("Autonomous coding workflow hanya tersedia untuk tugas agent.");
       this.autonomousWorkflow = createAutonomousWorkflow(text);
+      this.autonomousVerificationPlan = null;
     }
     await session.update({
       desktopWorkflowMode: this.workflowMode,
       autonomousWorkflow: this.autonomousWorkflow,
+      autonomousVerificationPlan: this.autonomousVerificationPlan,
     });
     if (["initializing", "running", "waiting_model", "auth_required"].includes(session.state.phase)) {
       await session.update({ phase: "interrupted" });
@@ -656,9 +672,13 @@ export class DesktopAgentService {
     this.autonomousDecisionInProgress = true;
     try {
       const approved = approveAutonomousWorkflow(this.session.state.autonomousWorkflow ?? this.autonomousWorkflow);
+      const verificationPlan = await resolveAutonomousChecks({
+        workspace: this.session.state.projectRoot,
+      });
       const appDataDir = path.resolve(getAppDataDir());
       const checkpoint = await WorkspaceCheckpoint.create({ workspace: this.session.state.projectRoot, directory: path.join(appDataDir, "autonomous-checkpoints"), sessionId: this.session.sessionId });
       this.workspaceCheckpoint = checkpoint;
+      this.autonomousVerificationPlan = verificationPlan;
       const instruction = buildApprovedImplementationInstruction(approved);
       this.workflowMode = "autonomous";
       this.autonomousWorkflow = approved;
@@ -670,6 +690,7 @@ export class DesktopAgentService {
         statePatch: {
           desktopWorkflowMode: "autonomous",
           autonomousWorkflow: approved,
+          autonomousVerificationPlan: verificationPlan,
           workspaceCheckpoint: { id: checkpoint.id, directory: checkpoint.directory, status: "captured", createdAt: checkpoint.metadata.createdAt },
         },
       });

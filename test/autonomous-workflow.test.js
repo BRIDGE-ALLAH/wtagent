@@ -11,6 +11,7 @@ import {
   buildAutonomousImplementationInstruction,
   buildAutonomousRepairInstruction,
   recordAutonomousVerificationAttempt,
+  getRepairableCheckIds,
   buildAutonomousPlanningInstruction,
   createAutonomousWorkflow,
   normalizeWorkflowMode,
@@ -169,4 +170,21 @@ test("unattended policy denial prevents machine completion", () => {
   assert.equal(blocked.phase, "verification_required");
   assert.equal(blocked.verificationStatus, "policy_denied");
   assert.equal(blocked.completedAt, null);
+});
+
+test("repair eligibility requires confirmed pass/fail exit evidence for every check", () => {
+  assert.deepEqual(getRepairableCheckIds({
+    status: "failed",
+    checks: [
+      { id: "package:test", status: "failed", exitCode: 1, completionKnown: true },
+      { id: "package:check", status: "passed", exitCode: 0, completionKnown: true },
+    ],
+  }), ["package:test"]);
+  for (const check of [
+    { id: "package:test", status: "timed_out", exitCode: null, completionKnown: false },
+    { id: "package:test", status: "spawn_error", exitCode: null, completionKnown: true },
+    { id: "package:test", status: "failed", exitCode: 1, completionKnown: false },
+  ]) {
+    assert.deepEqual(getRepairableCheckIds({ status: "failed", checks: [check] }), []);
+  }
 });

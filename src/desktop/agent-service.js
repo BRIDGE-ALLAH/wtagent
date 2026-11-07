@@ -32,6 +32,7 @@ import {
   shouldEnforceReadOnlyPolicy,
   storeAutonomousPlan,
 } from "./autonomous-workflow.js";
+import { WorkspaceCheckpoint } from "./workspace-checkpoint.js";} from "./autonomous-workflow.js";
 
 function emitSafely(callback, event) {
   try {
@@ -58,6 +59,7 @@ export class DesktopAgentService {
     this.workflowMode = "agent";
     this.autonomousWorkflow = null;
     this.autonomousDecisionInProgress = false;
+    this.workspaceCheckpoint = null;
     this.running = false;
     this.closed = false;
   }
@@ -405,6 +407,13 @@ export class DesktopAgentService {
         inPlaceRecovery: false,
         mode: null,
       });
+      if (this.workflowMode === "autonomous" && this.workspaceCheckpoint) {
+        const finalized = await WorkspaceCheckpoint.finalize({ directory: this.workspaceCheckpoint.directory });
+        await this.session.update({ workspaceCheckpoint: { id: finalized.id, directory: this.workspaceCheckpoint.directory, status: "completed", createdAt: finalized.createdAt, completedAt: finalized.completedAt, changedFiles: finalized.changed.length } });
+        await this.session.appendEvent("autonomous.workspace_checkpointed", { checkpointId: finalized.id, changedFiles: finalized.changed.length });
+        this.#emit("desktop.workspace_checkpointed", { checkpointId: finalized.id, changedFiles: finalized.changed.length });
+        this.workspaceCheckpoint = null;
+      }
       this.#emit("desktop.turn_finished", {
         sessionId: this.session.sessionId,
         phase: this.session.state.phase,
@@ -457,6 +466,9 @@ export class DesktopAgentService {
     this.autonomousDecisionInProgress = true;
     try {
       const approved = approveAutonomousWorkflow(this.session.state.autonomousWorkflow ?? this.autonomousWorkflow);
+      const appDataDir = path.resolve(getAppDataDir());
+      const checkpoint = await WorkspaceCheckpoint.create({ workspace: this.session.state.projectRoot, directory: path.join(appDataDir, "autonomous-checkpoints"), sessionId: this.session.sessionId });
+      this.workspaceCheckpoint = checkpoint;
       const instruction = buildApprovedImplementationInstruction(approved);
       this.workflowMode = "autonomous";
       this.autonomousWorkflow = approved;
@@ -468,6 +480,7 @@ export class DesktopAgentService {
         statePatch: {
           desktopWorkflowMode: "autonomous",
           autonomousWorkflow: approved,
+          workspaceCheckpoint: { id: checkpoint.id, directory: checkpoint.directory, status: "captured", createdAt: checkpoint.metadata.createdAt },
         },
       });
       await this.session.appendEvent("autonomous.plan_approved", {
@@ -487,6 +500,17 @@ export class DesktopAgentService {
     } finally {
       this.autonomousDecisionInProgress = false;
     }
+  }
+
+  async rollbackWorkspaceCheckpoint() {
+    if(!this.session)throw Error("Tidak ada sesi agent aktif.");
+    if(this.running||this.autonomousDecisionInProgress)throw Error("Tunggu agent selesai sebelum rollback.");
+    const cp=this.session.state.workspaceCheckpoint;
+    if(!cp?.directory||cp.status!=="completed")throw Error("Tidak ada checkpoint workspace yang siap di-rollback.");
+    const result=await WorkspaceCheckpoint.rollback({directory:cp.directory});
+    await this.session.update({workspaceCheckpoint:{...cp,status:"rolled_back",rolledBackAt:new Date().toISOString()}});
+    await this.session.appendEvent("autonomous.workspace_rolled_back",result);
+    this.#emit("desktop.workspace_rolled_back",result);return result;
   }
 
   async rejectAutonomousPlan() {

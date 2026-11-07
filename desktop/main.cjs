@@ -272,6 +272,7 @@ function registerIpc() {
     return { ok: true, result: await agentService.approveAutonomousPlan() };
   });
   ipcMain.handle("agent:reject-plan", async () => agentService?.rejectAutonomousPlan() ?? false);
+  ipcMain.handle("agent:rollback-workspace", async () => { if(!agentService)throw Error("Agent belum dimulai."); return await agentService.rollbackWorkspaceCheckpoint(); });
   ipcMain.handle("agent:continue-provider", async () => {
     agentService?.continueProviderSelection();
     return true;

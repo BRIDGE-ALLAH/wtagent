@@ -47,6 +47,10 @@ Build output is written to `desktop/dist/`. macOS distribution signing/notarizat
 - Saved WTAgent session list, session resume/recovery, and locally persisted chat activity display
 - Provider manager for all supported web providers, profile-folder status/open, default provider, and a local note for a preferred model
 
+### Autonomous workspace checkpoint and rollback
+
+After explicit plan approval, WTAgent snapshots the workspace before implementation (maximum 8,000 regular files / 128 MiB; dependency and generated folders are excluded). After a successful run, a changed-file manifest is finalized and a rollback action appears in chat. Rollback verifies every affected file against the agent output before restoring anything; if any affected file has changed since completion, the entire rollback is refused. New files are removed and modified/deleted files are restored. Interrupted runs do not expose automatic rollback because partial agent writes cannot safely be distinguished from concurrent user edits.
+
 ## Notes and current limitations
 
 - The shell process is persistent across sequential commands, but it is not backed by a native PTY. A foreground command occupies the shell until it exits; for a background dev server, use `start /B ...` in CMD, `Start-Process ...` in PowerShell, or `... &` in Bash. Full-screen terminal programs, raw keyboard modes, and rich terminal emulation (for example `vim` or `top`) are not supported reliably. Stop ends the shell process.

@@ -162,6 +162,16 @@ function showProviderSelection(payload) {
   $("#chat-feed").scrollTop = $("#chat-feed").scrollHeight;
 }
 
+function showWorkspaceRollback(payload) {
+  $(".workspace-rollback-card")?.remove();
+  const card=document.createElement("section");card.className="autonomous-plan-card workspace-rollback-card";
+  const heading=document.createElement("div");heading.className="autonomous-plan-heading";heading.textContent="Checkpoint workspace tersedia";
+  const detail=document.createElement("p");detail.className="autonomous-plan-summary";detail.textContent=(payload.changedFiles??0)+" file berubah. Rollback hanya berjalan jika semua file tersebut belum diedit lagi sejak agent selesai.";
+  const button=document.createElement("button");button.className="button secondary";button.type="button";button.textContent="Rollback perubahan agent";
+  button.addEventListener("click",async()=>{if(!confirm("Pulihkan file yang diubah agent ke kondisi sebelum implementasi? Jika ada file diedit setelah agent selesai, rollback akan dibatalkan."))return;button.disabled=true;try{const result=await api.rollbackWorkspaceCheckpoint();detail.textContent="Rollback selesai. "+result.restoredFiles+" file dipulihkan.";button.remove();await refreshFiles();await refreshGitStatus();reloadActiveFileIfClean();appendActivity("Workspace di-rollback",result.restoredFiles+" file dipulihkan.");}catch(error){detail.textContent=error.message+(error.conflicts?.length?"\nKonflik: "+error.conflicts.join(", "):"");button.disabled=false;}});
+  card.append(heading,detail,button);$("#chat-feed").append(card);$("#chat-feed").scrollTop=$("#chat-feed").scrollHeight;
+}
+
 function showAutonomousPlan(payload) {
   const plan = String(payload.plan ?? "").trim();
   if (!plan) return;
@@ -871,6 +881,13 @@ api.onAgentEvent((event) => {
       break;
     case "desktop.autonomous_completed":
       appendActivity("Autonomous workflow selesai", "Agent menyelesaikan langkah implementasi dan mengirim ringkasan hasil.");
+      break;
+    case "desktop.workspace_checkpointed":
+      showWorkspaceRollback(payload);
+      appendActivity("Checkpoint workspace tersimpan",payload.changedFiles+" file perubahan agent dapat dipulihkan dengan pemeriksaan konflik.");
+      break;
+    case "desktop.workspace_rolled_back":
+      appendActivity("Rollback workspace selesai",payload.restoredFiles+" file dipulihkan.");
       break;
     case "desktop.turn_started":
       setAgentStatus("Memproses tugas…", "busy");

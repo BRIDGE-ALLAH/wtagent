@@ -120,6 +120,7 @@ button { cursor: pointer; }
 .activity-detail { color:#8e98a9; white-space:pre-wrap; overflow-wrap:anywhere; font:10px/1.5 ui-monospace,monospace; max-height:130px; overflow:auto; }
 .autonomous-plan-card { border:1px solid #5a6488; background:#222938; border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:9px; }
 .autonomous-plan-heading { color:#d5dcff; font-size:12px; font-weight:750; }
+.workspace-rollback-card { border-color:#8a7548; }
 .autonomous-plan-summary { color:#aeb8cb; font-size:11px; line-height:1.5; margin:0; }
 .autonomous-plan-content { max-height:340px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:10px/1.55 ui-monospace,monospace; background:#171d28; border:1px solid #343d51; border-radius:7px; padding:10px; color:#dce3ef; }
 .autonomous-plan-fingerprint { color:#79869e; font:9px/1.4 ui-monospace,monospace; overflow-wrap:anywhere; }

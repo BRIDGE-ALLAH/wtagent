@@ -56,6 +56,10 @@ test("desktop workflows include safe plan-only enforcement and real session reco
   assert.match(renderer, /WORKFLOW: PLAN ONLY/);
   assert.match(renderer, /WORKFLOW: PLAN, IMPLEMENT, AND VERIFY/);
   assert.match(renderer, /showAutonomousPlan/);
+  assert.match(renderer, /showWorkspaceRollback/);
+  assert.match(service, /WorkspaceCheckpoint\\.create/);
+  assert.match(service, /WorkspaceCheckpoint\\.finalize/);
+  assert.match(service, /WorkspaceCheckpoint\\.rollback/);
   assert.match(html, /value="autonomous"/);
 });
 
@@ -69,7 +73,7 @@ test("Git, provider profiles, and persistent terminal are connected end to end",
   for (const channel of [
     "terminal:start", "terminal:write", "terminal:stop",
     "git:status", "git:diff", "git:stage", "git:stage-all", "git:commit", "git:checkout",
-    "provider:profiles", "provider:open-profile",
+    "provider:profiles", "provider:open-profile", "agent:rollback-workspace",
     "agent:sessions", "agent:resume", "agent:approve-plan", "agent:reject-plan",
   ]) {
     assert.match(main, new RegExp('ipcMain\\.handle\\("' + channel + '"'));

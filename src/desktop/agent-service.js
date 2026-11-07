@@ -378,6 +378,14 @@ export class DesktopAgentService {
         reason: recoveryStatus.reason,
       };
     }
+    const resumeInstruction = String(instruction ?? "").trim();
+    if (recoveryStatus.requiresBareResume && resumeInstruction) {
+      const error = new Error(
+        "Sesi memiliki pekerjaan provider/tool yang belum direkonsiliasi. Lakukan resume tanpa instruksi atau lampiran terlebih dahulu.",
+      );
+      error.code = "RECOVERY_REQUIRES_BARE_RESUME";
+      throw error;
+    }
     const projectRoot = path.resolve(String(session.state.projectRoot ?? ""));
     const projectStat = await fs.stat(projectRoot);
     if (!projectStat.isDirectory()) throw new Error("Folder proyek sesi ini tidak lagi tersedia.");
@@ -636,6 +644,19 @@ export class DesktopAgentService {
     if (this.running || this.autonomousDecisionInProgress) throw new Error("Agent sedang memproses tugas sebelumnya.");
     const text = String(instruction ?? "").trim();
     if (!text) throw new Error("Instruksi tidak boleh kosong.");
+    const recoveryStatus = getSessionRecoveryStatus(this.session.state);
+    if (recoveryStatus.blocked) {
+      const error = new Error(recoveryStatus.reason);
+      error.code = recoveryStatus.code;
+      throw error;
+    }
+    if (recoveryStatus.requiresBareResume) {
+      const error = new Error(
+        "Sesi memiliki pekerjaan provider/tool yang belum direkonsiliasi. Panggil resume tanpa instruksi terlebih dahulu.",
+      );
+      error.code = "RECOVERY_REQUIRES_BARE_RESUME";
+      throw error;
+    }
     if (this.session.state.autonomousWorkflow?.phase === "awaiting_approval") {
       throw new Error("Tinjau, setujui, atau tolak rencana autonomous sebelum mengirim instruksi baru.");
     }

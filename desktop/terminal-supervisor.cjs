@@ -48,6 +48,15 @@ function terminalError(code, message) {
   return error;
 }
 
+async function requestKill(killProcessTreeImpl, pid, signal, platform) {
+  let timer;
+  await Promise.race([
+    Promise.resolve().then(() => killProcessTreeImpl(pid, signal, { platform })).catch(() => undefined),
+    new Promise((resolve) => { timer = setTimeout(resolve, 500); }),
+  ]);
+  clearTimeout(timer);
+}
+
 async function stopTerminalProcess(terminal, {
   platform = process.platform,
   killProcessTreeImpl = killProcessTree,
@@ -61,13 +70,11 @@ async function stopTerminalProcess(terminal, {
     if (!terminal.child?.pid) {
       return { status: "completion_unknown" };
     }
-    await Promise.resolve(killProcessTreeImpl(terminal.child.pid, "SIGTERM", { platform }))
-      .catch(() => undefined);
+    await requestKill(killProcessTreeImpl, terminal.child.pid, "SIGTERM", platform);
     if (await waitForClose(terminal, stopGraceMs)) return { status: "exited" };
     if (terminal.closed) return { status: "exited" };
 
-    await Promise.resolve(killProcessTreeImpl(terminal.child.pid, "SIGKILL", { platform }))
-      .catch(() => undefined);
+    await requestKill(killProcessTreeImpl, terminal.child.pid, "SIGKILL", platform);
     if (await waitForClose(terminal, forceGraceMs)) return { status: "exited" };
     return { status: "completion_unknown" };
   })();

@@ -230,6 +230,9 @@ export class DesktopAgentService {
     if (this.autonomousWorkflow?.phase === "awaiting_approval" && text) {
       throw new Error("Tinjau, setujui, atau tolak rencana autonomous sebelum mengirim instruksi baru.");
     }
+    if (this.autonomousWorkflow?.phase === "verification_required" && text) {
+      throw new Error("Periksa dan terima hasil autonomous yang tertunda sebelum memulai instruksi baru.");
+    }
     if (this.workflowMode === "autonomous" && text) {
       if (generationType !== "agent") throw new Error("Autonomous coding workflow hanya tersedia untuk tugas agent.");
       this.autonomousWorkflow = createAutonomousWorkflow(text);
@@ -450,6 +453,9 @@ export class DesktopAgentService {
     if (!text) throw new Error("Instruksi tidak boleh kosong.");
     if (this.session.state.autonomousWorkflow?.phase === "awaiting_approval") {
       throw new Error("Tinjau, setujui, atau tolak rencana autonomous sebelum mengirim instruksi baru.");
+    }
+    if (this.session.state.autonomousWorkflow?.phase === "verification_required") {
+      throw new Error("Periksa dan terima hasil autonomous yang tertunda sebelum memulai instruksi baru.");
     }
     this.workflowMode = normalizeWorkflowMode(workflowMode);
     if (this.workflowMode === "autonomous" && this.session.state.generationType !== "agent") {

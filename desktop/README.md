@@ -49,7 +49,7 @@ Build output is written to `desktop/dist/`. macOS distribution signing/notarizat
 
 ### Autonomous workspace checkpoint and rollback
 
-After explicit plan approval, WTAgent snapshots the workspace before implementation (maximum 8,000 regular files / 128 MiB; dependency and generated folders are excluded). After a successful run, a changed-file manifest is finalized and a rollback action appears in chat. Rollback verifies every affected file against the agent output before restoring anything; if any affected file has changed since completion, the entire rollback is refused. New files are removed and modified/deleted files are restored. Interrupted runs do not expose automatic rollback because partial agent writes cannot safely be distinguished from concurrent user edits.
+After explicit plan approval, WTAgent snapshots the workspace before implementation (maximum 8,000 regular files / 128 MiB; dependency and generated folders are excluded). After a successful run, a changed-file manifest is finalized and a rollback action appears in chat. Rollback verifies every affected file against the agent output before restoring anything; if any affected file has changed since completion, the entire rollback is refused. New files are removed and modified/deleted files are restored. Users should not edit the workspace while the agent is running: concurrent edits made during the run cannot be distinguished reliably from agent edits. Interrupted runs do not expose automatic rollback because partial agent writes cannot safely be distinguished from concurrent user edits.
 
 ## Notes and current limitations
 

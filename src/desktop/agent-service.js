@@ -147,7 +147,7 @@ export class DesktopAgentService {
 
   async start({ projectRoot, model = "chatgpt", instruction, generationType = "agent", workflowMode = "agent" }) {
     const releaseLifecycle = this.lifecycleGuard.enter("start");
-    try { projectRoot, model = "chatgpt", instruction, generationType = "agent", workflowMode = "agent" }) {
+    try {
     if (this.session) throw new Error("An agent session is already active.");
     assertNativeRuntimeSupported();
 
@@ -233,7 +233,7 @@ export class DesktopAgentService {
 
   async resume({ sessionId, instruction = "", workflowMode = null }) {
     const releaseLifecycle = this.lifecycleGuard.enter("resume");
-    try { sessionId, instruction = "", workflowMode = null }) {
+    try {
     if (this.session) throw new Error("Tutup sesi aktif sebelum membuka sesi lain.");
     assertNativeRuntimeSupported();
     const appDataDir = path.resolve(getAppDataDir());

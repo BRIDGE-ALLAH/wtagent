@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { resolveToolPath } from "../policy/path-guard.js";
+import { isPathInside, resolveToolPath } from "../policy/path-guard.js";
 
 const READ_ONLY_TOOLS = new Set([
   "fs.list",
@@ -32,7 +32,15 @@ function denied(code, reason) {
 }
 
 async function validateWorkspaceWrite(name, workspaceRoot, resolvedPath) {
-  const relative = path.relative(path.resolve(workspaceRoot), path.resolve(resolvedPath));
+  // resolveToolPath canonicalizes the target (and the workspace root). Resolve
+  // the root here too; otherwise macOS /tmp -> /private/tmp makes every target
+  // appear to be outside the lexical root and bypasses protected-file checks.
+  const canonicalRoot = await fs.realpath(path.resolve(workspaceRoot));
+  const canonicalTarget = path.resolve(resolvedPath);
+  if (!isPathInside(canonicalRoot, canonicalTarget)) {
+    return denied("AUTONOMOUS_PATH_OUTSIDE_WORKSPACE", "The canonical write target is outside the selected workspace.");
+  }
+  const relative = path.relative(canonicalRoot, canonicalTarget);
   const segments = relative.split(path.sep).filter(Boolean);
   const normalized = segments.map((segment) => segment.toLowerCase());
   if (normalized.some((segment) => PROTECTED_DIRECTORIES.has(segment))) {

@@ -156,3 +156,22 @@ test("targeted repair verification merges only rerun results and preserves prior
   assert.equal(merged.status, "passed");
   assert.deepEqual(merged.checks.map((check) => check.status), ["passed", "passed"]);
 });
+
+test("targeted verifier runs only the requested failed check", async (t) => {
+  const root = await fixture(t);
+  const launched = [];
+  const result = await runAutonomousVerification({
+    workspace: root,
+    checkIds: ["package:test"],
+    spawnImpl: (_program, args) => {
+      launched.push(args[0]);
+      const child = fakeChild();
+      setImmediate(() => child.emit("close", 0, null));
+      return child;
+    },
+  });
+  assert.equal(result.status, "passed");
+  assert.equal(result.checks.length, 1);
+  assert.equal(result.checks[0].id, "package:test");
+  assert.equal(launched.length, 1);
+});

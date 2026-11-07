@@ -36,7 +36,8 @@ function boundedPlan(value) {
     else high = middle - 1;
   }
   let prefix = plan.slice(0, low);
-  if (/[\\uD800-\\uDBFF]$/.test(prefix)) prefix = prefix.slice(0, -1);
+  const lastCodeUnit = prefix.charCodeAt(prefix.length - 1);
+  if (lastCodeUnit >= 0xD800 && lastCodeUnit <= 0xDBFF) prefix = prefix.slice(0, -1);
   return prefix.trimEnd() + suffix;
 }
 

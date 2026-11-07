@@ -91,6 +91,24 @@ export class DesktopAgentService {
     if (typeof payload.stdout === "string") payload.stdout = payload.stdout.slice(-8_000);
     if (typeof payload.stderr === "string") payload.stderr = payload.stderr.slice(-8_000);
 
+    if (
+      this.workflowMode === "autonomous"
+      && this.autonomousWorkflow?.phase === "implementing"
+      && event.type === "tool.invalid"
+      && /AUTONOMOUS_[A-Z_]+/.test(String(payload.message ?? ""))
+    ) {
+      this.autonomousWorkflow = {
+        ...this.autonomousWorkflow,
+        repairBlockedReason: String(payload.message).slice(0, 2_000),
+        pendingRepairCheckIds: null,
+      };
+      await this.session.update({ autonomousWorkflow: this.autonomousWorkflow });
+      await this.session.appendEvent("autonomous.repair_blocked", {
+        reason: this.autonomousWorkflow.repairBlockedReason,
+        planSha256: this.autonomousWorkflow.planSha256,
+      });
+    }
+
     if (event.type === "run.completed" && this.workflowMode === "autonomous") {
       if (this.autonomousWorkflow?.phase === "planning") {
         try {
@@ -167,7 +185,7 @@ export class DesktopAgentService {
           && check.exitCode !== 0
         ));
         const repairAttempts = Number(attemptedWorkflow.repairAttempts ?? 0);
-        if (verification.status === "failed" && repairableFailures.length > 0 && repairAttempts < 2) {
+        if (verification.status === "failed" && repairableFailures.length > 0 && repairAttempts < 2 && !attemptedWorkflow.repairBlockedReason) {
           const nextAttempt = repairAttempts + 1;
           const repairWorkflow = {
             ...attemptedWorkflow,

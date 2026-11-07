@@ -205,7 +205,6 @@ export class DesktopAgentService {
       displayInstruction: userInstruction,
       files: attachmentResult.files,
     });
-  }
     } finally {
       releaseLifecycle();
     }
@@ -311,7 +310,6 @@ export class DesktopAgentService {
       displayInstruction: text,
       files: attachmentResult.files,
     });
-  }
     } finally {
       releaseLifecycle();
     }
@@ -519,7 +517,6 @@ export class DesktopAgentService {
       displayInstruction: text,
       files,
     });
-  }
     } finally {
       releaseLifecycle();
     }
@@ -567,7 +564,6 @@ export class DesktopAgentService {
     } finally {
       this.autonomousDecisionInProgress = false;
     }
-  }
     } finally {
       releaseLifecycle();
     }
@@ -598,7 +594,6 @@ export class DesktopAgentService {
       verificationStatus: accepted.verificationStatus,
     });
     return accepted;
-  }
     } finally {
       releaseLifecycle();
     }
@@ -615,7 +610,6 @@ export class DesktopAgentService {
     await this.session.update({workspaceCheckpoint:{...cp,status:"rolled_back",rolledBackAt:new Date().toISOString()}});
     await this.session.appendEvent("autonomous.workspace_rolled_back",result);
     this.#emit("desktop.workspace_rolled_back",result);return result;
-  }
     } finally {
       releaseLifecycle();
     }
@@ -641,7 +635,6 @@ export class DesktopAgentService {
     } finally {
       this.autonomousDecisionInProgress = false;
     }
-  }
     } finally {
       releaseLifecycle();
     }

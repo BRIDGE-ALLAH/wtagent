@@ -304,6 +304,7 @@ export async function runAutonomousVerification({
   forceGraceMs = DEFAULT_FORCE_GRACE_MS,
   outputLimitBytes = MAX_STREAM_BYTES,
   totalBudgetMs = DEFAULT_TOTAL_BUDGET_MS,
+  timeoutOverrides = {},
 } = {}) {
   const resolved = await resolveAutonomousChecks({ workspace });
   if (!resolved.checks.length) {
@@ -343,7 +344,8 @@ export async function runAutonomousVerification({
         });
         break;
       }
-      const boundedCheck = { ...check, timeoutMs: Math.min(check.timeoutMs, remaining) };
+      const requestedTimeout = timeoutOverrides[check.id] ?? check.timeoutMs;
+      const boundedCheck = { ...check, timeoutMs: Math.min(requestedTimeout, remaining) };
       const result = await runCheck(boundedCheck, {
         spawnImpl,
         killProcessTreeImpl,

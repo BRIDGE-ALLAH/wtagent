@@ -14,7 +14,7 @@ function denied(code, reason) {
   return {
     action: "deny",
     code,
-    reasons: [reason],
+    reasons: [`${code}: ${reason}`],
     grants: { allowOutside: false },
   };
 }

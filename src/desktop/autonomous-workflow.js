@@ -97,6 +97,8 @@ export function recordAutonomousVerificationAttempt(workflow, result, now = new 
     startedAt: result?.startedAt ?? now,
     finishedAt: result?.finishedAt ?? now,
     durationMs: Number.isFinite(result?.durationMs) ? result.durationMs : null,
+    manifestSha256: result?.manifestSha256 ?? null,
+    baselineIntegrityFileCount: result?.baselineIntegrityFileCount ?? 0,
     checks: checks.map((check) => ({
       id: check.id,
       status: check.status,

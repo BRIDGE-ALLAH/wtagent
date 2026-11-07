@@ -107,6 +107,7 @@ test("runner escalates timed-out processes and records unknown completion", asyn
     workspace: root,
     stopGraceMs: 5,
     forceGraceMs: 5,
+    timeoutOverrides: { "package:test": 5 },
     killProcessTreeImpl: async (pid, signal) => calls.push({ pid, signal }),
     spawnImpl: () => fakeChild(),
   });

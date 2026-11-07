@@ -25,6 +25,8 @@ import { assertNativeRuntimeSupported } from "../platform/windows-diagnostics.js
 import {
   acceptAutonomousVerification,
   approveAutonomousWorkflow,
+  beginAutonomousImplementation,
+  buildAutonomousImplementationInstruction,
   buildApprovedImplementationInstruction,
   buildAutonomousPlanningInstruction,
   createAutonomousWorkflow,
@@ -35,6 +37,7 @@ import {
   storeAutonomousPlan,
 } from "./autonomous-workflow.js";
 import { WorkspaceCheckpoint } from "./workspace-checkpoint.js";
+import { evaluateAutonomousToolPolicy } from "./autonomous-tool-policy.js";
 
 function emitSafely(callback, event) {
   try {
@@ -62,6 +65,7 @@ export class DesktopAgentService {
     this.autonomousWorkflow = null;
     this.autonomousDecisionInProgress = false;
     this.workspaceCheckpoint = null;
+    this.pendingAutonomousImplementation = null;
     this.running = false;
     this.closed = false;
   }
@@ -86,19 +90,43 @@ export class DesktopAgentService {
     if (event.type === "run.completed" && this.workflowMode === "autonomous") {
       if (this.autonomousWorkflow?.phase === "planning") {
         try {
-          this.autonomousWorkflow = storeAutonomousPlan(this.autonomousWorkflow, payload.message);
-          await this.session.update({ autonomousWorkflow: this.autonomousWorkflow });
-          await this.session.appendEvent("autonomous.plan_ready", {
-            planSha256: this.autonomousWorkflow.planSha256,
-            plannedAt: this.autonomousWorkflow.plannedAt,
+          const planned = storeAutonomousPlan(this.autonomousWorkflow, payload.message);
+          const appDataDir = path.resolve(getAppDataDir());
+          const checkpoint = await WorkspaceCheckpoint.create({
+            workspace: this.session.state.projectRoot,
+            directory: path.join(appDataDir, "autonomous-checkpoints"),
+            sessionId: this.session.sessionId,
           });
-          this.#emit("desktop.plan_ready", {
-            plan: this.autonomousWorkflow.plan,
-            planSha256: this.autonomousWorkflow.planSha256,
-            plannedAt: this.autonomousWorkflow.plannedAt,
-            task: this.autonomousWorkflow.task,
+          const implementing = beginAutonomousImplementation(planned);
+          const instruction = buildAutonomousImplementationInstruction(planned);
+          await this.session.appendInstruction(instruction, {
+            statePatch: {
+              desktopWorkflowMode: "autonomous",
+              autonomousWorkflow: implementing,
+              workspaceCheckpoint: {
+                id: checkpoint.id,
+                directory: checkpoint.directory,
+                status: "captured",
+                createdAt: checkpoint.metadata.createdAt,
+              },
+            },
+          });
+          this.workspaceCheckpoint = checkpoint;
+          this.autonomousWorkflow = implementing;
+          this.pendingAutonomousImplementation = { instruction, planSha256: implementing.planSha256 };
+          await this.session.appendEvent("autonomous.implementation_started", {
+            implementationStartedAt: implementing.implementationStartedAt,
+            planSha256: implementing.planSha256,
+            checkpointId: checkpoint.id,
+          });
+          this.#emit("desktop.autonomous_implementation_started", {
+            planSha256: implementing.planSha256,
+            checkpointId: checkpoint.id,
+            message: "Rencana tervalidasi dan checkpoint tersimpan. Implementasi berjalan otomatis.",
           });
         } catch (error) {
+          this.pendingAutonomousImplementation = null;
+          this.workspaceCheckpoint = null;
           this.autonomousWorkflow = { ...this.autonomousWorkflow, phase: "plan_failed", lastError: error.message };
           await this.session.update({ autonomousWorkflow: this.autonomousWorkflow });
           await this.session.appendEvent("autonomous.plan_failed", { message: this.autonomousWorkflow.lastError });
@@ -365,16 +393,24 @@ export class DesktopAgentService {
     const basePolicy = new PolicyEngine({ store: this.approvalStore });
     const policy = {
       evaluate: async (toolCall, context) => {
+        const definition = registry.list().find((tool) => tool.name === toolCall.name);
+        if (this.workflowMode === "autonomous" && this.autonomousWorkflow?.phase === "implementing") {
+          return await evaluateAutonomousToolPolicy({
+            toolCall,
+            definition,
+            projectRoot: this.session.state.projectRoot,
+          });
+        }
         if (shouldEnforceReadOnlyPolicy({
           workflowMode: this.workflowMode,
           autonomousWorkflow: this.autonomousWorkflow,
         })) {
-          const definition = registry.list().find((tool) => tool.name === toolCall.name);
-          if (definition && definition.risk !== "read") {
+          if (!definition || definition.risk !== "read") {
             return {
               action: "deny",
+              code: "PLAN_MODE_READ_ONLY",
               reasons: [this.workflowMode === "autonomous"
-                ? "Autonomous planning phase: tool " + toolCall.name + " is blocked until the user approves the plan."
+                ? "Autonomous planning phase: non-read-only tool " + toolCall.name + " is denied."
                 : "Plan-only mode: tool " + toolCall.name + " is disabled because it may change files or execute commands."],
               grants: { allowOutside: false },
             };
@@ -408,13 +444,25 @@ export class DesktopAgentService {
     this.#emit("desktop.turn_started", { instruction: displayInstruction, workflowMode: this.workflowMode });
     try {
       const runtime = await this.#buildRuntime();
-      const result = await runtime.run({
+      let result = await runtime.run({
         resume,
         instruction,
         files,
         inPlaceRecovery: false,
         mode: null,
       });
+      while (this.pendingAutonomousImplementation) {
+        const pending = this.pendingAutonomousImplementation;
+        this.pendingAutonomousImplementation = null;
+        const implementationRuntime = await this.#buildRuntime();
+        result = await implementationRuntime.run({
+          resume: true,
+          instruction: pending.instruction,
+          files: [],
+          inPlaceRecovery: false,
+          mode: null,
+        });
+      }
       if (this.workflowMode === "autonomous" && this.workspaceCheckpoint) {
         const checkpoint = this.workspaceCheckpoint;
         try {

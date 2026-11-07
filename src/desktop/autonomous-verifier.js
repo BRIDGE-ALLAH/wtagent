@@ -305,9 +305,13 @@ export async function runAutonomousVerification({
   outputLimitBytes = MAX_STREAM_BYTES,
   totalBudgetMs = DEFAULT_TOTAL_BUDGET_MS,
   timeoutOverrides = {},
+  checkIds = null,
 } = {}) {
   const resolved = await resolveAutonomousChecks({ workspace });
-  if (!resolved.checks.length) {
+  const selectedChecks = Array.isArray(checkIds)
+    ? resolved.checks.filter((check) => checkIds.includes(check.id))
+    : resolved.checks;
+  if (!selectedChecks.length) {
     return {
       status: resolved.status === "unsupported" ? "unsupported" : "unavailable",
       startedAt: new Date().toISOString(),
@@ -323,7 +327,7 @@ export async function runAutonomousVerification({
   const results = [];
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "wtagent-verification-home-"));
   try {
-    for (const check of resolved.checks) {
+    for (const check of selectedChecks) {
       const remaining = totalBudgetMs - (Date.now() - started);
       if (remaining <= 0) {
         results.push({
@@ -362,7 +366,7 @@ export async function runAutonomousVerification({
     await fs.rm(home, { recursive: true, force: true }).catch(() => {});
   }
 
-  const skipped = resolved.checks.slice(results.length).map((check) => ({
+  const skipped = selectedChecks.slice(results.length).map((check) => ({
     ...check,
     status: "skipped",
     completionKnown: false,
@@ -370,7 +374,7 @@ export async function runAutonomousVerification({
   }));
   const allChecks = [...results, ...skipped, ...resolved.unsupported];
   const passed = resolved.unsupported.length === 0
-    && results.length === resolved.checks.length
+    && results.length === selectedChecks.length
     && results.every((item) => item.status === "passed" && item.exitCode === 0 && item.completionKnown);
   const status = passed
     ? "passed"
@@ -385,6 +389,29 @@ export async function runAutonomousVerification({
     checks: allChecks,
     unsupported: resolved.unsupported,
     reason: passed ? null : resolved.reason ?? "One or more required checks did not produce confirmed successful exit evidence.",
+  };
+}
+
+
+export function mergeAutonomousVerificationResults(previous, current) {
+  const merged = new Map();
+  for (const check of previous?.checks ?? []) merged.set(check.id, check);
+  for (const check of current?.checks ?? []) merged.set(check.id, check);
+  const checks = [...merged.values()];
+  const unsupported = current?.unsupported ?? previous?.unsupported ?? [];
+  const allPassed = checks.length > 0
+    && unsupported.length === 0
+    && checks.every((check) => check.status === "passed" && check.exitCode === 0 && check.completionKnown === true);
+  let status = current?.status ?? "unavailable";
+  if (allPassed) status = "passed";
+  else if (unsupported.length) status = "unsupported";
+  else if (status === "passed") status = "failed";
+  return {
+    ...current,
+    status,
+    checks,
+    unsupported,
+    reason: allPassed ? null : current?.reason ?? previous?.reason ?? "One or more required checks remain unsuccessful.",
   };
 }
 

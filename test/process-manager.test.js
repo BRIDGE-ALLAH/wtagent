@@ -125,3 +125,19 @@ test("detected URL metadata has a unique-item cap and explicit truncation flag",
   children[0].stdout.end();
   children[0].stderr.end();
 });
+
+test("stop remains bounded when process-tree kill requests never settle", async () => {
+  const { manager } = makeManager({
+    managerOptions: {
+      stopGraceMs: 5,
+      forceStopGraceMs: 5,
+      killRequestTimeoutMs: 5,
+    },
+    kill: () => new Promise(() => {}),
+  });
+  const started = start(manager);
+  const before = Date.now();
+  const result = await manager.stop(started.processId);
+  assert.equal(result.status, "completion_unknown");
+  assert.ok(Date.now() - before < 500);
+});

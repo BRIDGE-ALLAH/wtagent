@@ -27,6 +27,8 @@ import {
   approveAutonomousWorkflow,
   beginAutonomousImplementation,
   buildAutonomousImplementationInstruction,
+  buildAutonomousRepairInstruction,
+  recordAutonomousVerificationAttempt,
   buildApprovedImplementationInstruction,
   buildAutonomousPlanningInstruction,
   createAutonomousWorkflow,
@@ -38,7 +40,7 @@ import {
 } from "./autonomous-workflow.js";
 import { WorkspaceCheckpoint } from "./workspace-checkpoint.js";
 import { evaluateAutonomousToolPolicy } from "./autonomous-tool-policy.js";
-import { runAutonomousVerification, recordAutonomousMachineVerification } from "./autonomous-verifier.js";
+import { runAutonomousVerification, recordAutonomousMachineVerification, mergeAutonomousVerificationResults } from "./autonomous-verifier.js";
 import { getSessionRecoveryStatus } from "./session-recovery.js";
 
 function emitSafely(callback, event) {
@@ -139,7 +141,14 @@ export class DesktopAgentService {
         try {
           verification = await runAutonomousVerification({
             workspace: this.session.state.projectRoot,
+            checkIds: this.autonomousWorkflow.pendingRepairCheckIds ?? null,
           });
+          if (this.autonomousWorkflow.pendingRepairCheckIds) {
+            verification = mergeAutonomousVerificationResults(
+              this.autonomousWorkflow.machineVerification,
+              verification,
+            );
+          }
         } catch (error) {
           verification = {
             status: "unavailable",
@@ -150,34 +159,83 @@ export class DesktopAgentService {
             reason: error.message || "Machine verification could not start.",
           };
         }
-        this.autonomousWorkflow = recordAutonomousMachineVerification(this.autonomousWorkflow, verification);
-        await this.session.update({ autonomousWorkflow: this.autonomousWorkflow });
-        await this.session.appendEvent(
-          this.autonomousWorkflow.phase === "completed"
-            ? "autonomous.machine_verified"
-            : "autonomous.verification_required",
-          {
-            planSha256: this.autonomousWorkflow.planSha256,
-            verificationStatus: this.autonomousWorkflow.verificationStatus,
-            machineVerification: this.autonomousWorkflow.machineVerification,
-            completedAt: this.autonomousWorkflow.completedAt,
-          },
-        );
-        if (this.autonomousWorkflow.phase === "completed") {
-          this.#emit("desktop.autonomous_completed", {
-            planSha256: this.autonomousWorkflow.planSha256,
-            verificationStatus: "machine_verified",
-            checks: this.autonomousWorkflow.machineVerification.checks,
-            message: "Implementasi dan seluruh pemeriksaan otomatis yang didukung berhasil.",
+        const attemptedWorkflow = recordAutonomousVerificationAttempt(this.autonomousWorkflow, verification);
+        const repairableFailures = verification.checks.filter((check) => (
+          check.status === "failed"
+          && check.completionKnown === true
+          && Number.isInteger(check.exitCode)
+          && check.exitCode !== 0
+        ));
+        const repairAttempts = Number(attemptedWorkflow.repairAttempts ?? 0);
+        if (verification.status === "failed" && repairableFailures.length > 0 && repairAttempts < 2) {
+          const nextAttempt = repairAttempts + 1;
+          const repairWorkflow = {
+            ...attemptedWorkflow,
+            phase: "implementing",
+            repairAttempts: nextAttempt,
+            pendingRepairCheckIds: repairableFailures.map((check) => check.id),
+            completedAt: null,
+          };
+          const repairInstruction = buildAutonomousRepairInstruction(
+            repairWorkflow,
+            repairableFailures,
+            nextAttempt,
+          );
+          await this.session.appendInstruction(repairInstruction, {
+            statePatch: { autonomousWorkflow: repairWorkflow },
           });
-        } else if (this.autonomousWorkflow.phase === "verification_required") {
-          this.#emit("desktop.autonomous_verification_required", {
-            verificationRequiredAt: this.autonomousWorkflow.verificationRequiredAt,
-            planSha256: this.autonomousWorkflow.planSha256,
-            verificationStatus: this.autonomousWorkflow.verificationStatus,
-            checks: this.autonomousWorkflow.machineVerification.checks,
-            message: "Implementasi selesai, tetapi verifikasi mesin belum lulus. Task tetap belum selesai.",
+          this.autonomousWorkflow = repairWorkflow;
+          this.pendingAutonomousImplementation = {
+            instruction: repairInstruction,
+            kind: "repair",
+          };
+          await this.session.appendEvent("autonomous.repair_started", {
+            attempt: nextAttempt,
+            maxAttempts: 2,
+            failedCheckIds: repairWorkflow.pendingRepairCheckIds,
+            planSha256: repairWorkflow.planSha256,
           });
+          this.#emit("desktop.autonomous_repair_started", {
+            attempt: nextAttempt,
+            maxAttempts: 2,
+            failedCheckIds: repairWorkflow.pendingRepairCheckIds,
+            message: "Verifikasi menemukan kegagalan terkonfirmasi. WTAgent menjalankan perbaikan otomatis terbatas.",
+          });
+        } else {
+          this.autonomousWorkflow = recordAutonomousMachineVerification({
+            ...attemptedWorkflow,
+            pendingRepairCheckIds: null,
+          }, verification);
+          await this.session.update({ autonomousWorkflow: this.autonomousWorkflow });
+          await this.session.appendEvent(
+            this.autonomousWorkflow.phase === "completed"
+              ? "autonomous.machine_verified"
+              : "autonomous.verification_required",
+            {
+              planSha256: this.autonomousWorkflow.planSha256,
+              verificationStatus: this.autonomousWorkflow.verificationStatus,
+              machineVerification: this.autonomousWorkflow.machineVerification,
+              verificationAttempts: this.autonomousWorkflow.verificationAttempts,
+              completedAt: this.autonomousWorkflow.completedAt,
+            },
+          );
+          if (this.autonomousWorkflow.phase === "completed") {
+            this.#emit("desktop.autonomous_completed", {
+              planSha256: this.autonomousWorkflow.planSha256,
+              verificationStatus: "machine_verified",
+              checks: this.autonomousWorkflow.machineVerification.checks,
+              message: "Implementasi dan seluruh pemeriksaan otomatis yang didukung berhasil.",
+            });
+          } else if (this.autonomousWorkflow.phase === "verification_required") {
+            this.#emit("desktop.autonomous_verification_required", {
+              verificationRequiredAt: this.autonomousWorkflow.verificationRequiredAt,
+              planSha256: this.autonomousWorkflow.planSha256,
+              verificationStatus: this.autonomousWorkflow.verificationStatus,
+              checks: this.autonomousWorkflow.machineVerification.checks,
+              verificationAttempts: this.autonomousWorkflow.verificationAttempts,
+              message: "Implementasi selesai, tetapi verifikasi mesin belum lulus. Task tetap belum selesai.",
+            });
+          }
         }
       }
     }

@@ -31,7 +31,7 @@ function denied(code, reason) {
   };
 }
 
-async function validateWorkspaceWrite(name, workspaceRoot, resolvedPath) {
+async function validateWorkspaceWrite(name, workspaceRoot, resolvedPath, verificationPlan) {
   // resolveToolPath canonicalizes the target (and the workspace root). Resolve
   // the root here too; otherwise macOS /tmp -> /private/tmp makes every target
   // appear to be outside the lexical root and bypasses protected-file checks.
@@ -43,6 +43,16 @@ async function validateWorkspaceWrite(name, workspaceRoot, resolvedPath) {
   const relative = path.relative(canonicalRoot, canonicalTarget);
   const segments = relative.split(path.sep).filter(Boolean);
   const normalized = segments.map((segment) => segment.toLowerCase());
+  const protectedScripts = Array.isArray(verificationPlan?.checks)
+    ? verificationPlan.checks.map((check) => check?.args?.[0]).filter((value) => typeof value === "string")
+    : [];
+  for (const scriptPath of protectedScripts) {
+    const canonicalScript = path.resolve(scriptPath);
+    if (canonicalScript === canonicalTarget) {
+      return denied("AUTONOMOUS_VERIFIER_PROTECTED", "A script captured by the trusted verification plan cannot be modified during unattended implementation.");
+    }
+  }
+
   if (normalized.some((segment) => PROTECTED_DIRECTORIES.has(segment))) {
     return denied("AUTONOMOUS_PROTECTED_PATH", "Writes to .git and node_modules are not permitted in unattended mode.");
   }
@@ -106,7 +116,7 @@ export async function evaluateAutonomousToolPolicy({
         return denied("AUTONOMOUS_PATH_OUTSIDE_WORKSPACE", `Path is outside the selected workspace: ${resolved.path}`);
       }
       if (WORKSPACE_WRITE_TOOLS.has(name)) {
-        const protectedPath = await validateWorkspaceWrite(name, projectRoot, resolved.path);
+        const protectedPath = await validateWorkspaceWrite(name, projectRoot, resolved.path, verificationPlan);
         if (protectedPath) return protectedPath;
       }
     } catch (error) {

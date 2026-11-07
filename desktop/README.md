@@ -38,17 +38,33 @@ Build output is written to `desktop/dist/`. macOS distribution signing/notarizat
 
 ## Current desktop features
 
-- Workspace folder picker and a project file explorer
-- Monaco editor for opening, editing, and saving text files (`Ctrl/Cmd+S`)
-- AI chat wired to WTAgent's existing `AgentRuntime`
-- Provider browser handoff and login flow
-- Per-action approval controls: allow once, always allow a tool, allow all tools, or deny
-- Workspace-scoped file access from the editor
-- Project command runner at the bottom (`Ctrl/Cmd+J` toggles the panel)
+- Workspace folder picker, explorer, Monaco editor, file save, and nested file creation (`Ctrl/Cmd+S`)
+- Persistent shell process for sequential commands (`Ctrl/Cmd+J` toggles the panel); background servers can be launched with the host shell’s background command
+- AI chat wired to WTAgent's existing `AgentRuntime`, with per-action approval controls
+- Workflow modes: **Agent**, **Plan only**, **Build & verify**, and **Autonomous**. Autonomous inspects the workspace under a hard read-only runtime policy, stores a bounded plan with a SHA-256 integrity hash, and pauses for an explicit **Approve plan** or **Reject plan** decision. Approval starts implementation in a second model turn; normal per-tool approvals remain active. Plan and decision state are persisted in the WTAgent session and restored after restart.
+- Autonomous implementation asks the agent to re-check workspace/Git state, preserve unrelated user changes, run relevant verification, inspect the final diff, and report only checks actually run. It does not push, publish, release, deploy, or bypass normal tool approvals.
+- Git source control: current branch, changed-file list, staged/unstaged diff, stage/unstage, create/switch branch, and local commit
+- Saved WTAgent session list, session resume/recovery, and locally persisted chat activity display
+- Provider manager for all supported web providers, profile-folder status/open, default provider, and a local note for a preferred model
 
-## Notes
+### Autonomous workspace checkpoint and rollback
 
-- Terminal commands are started as one-shot shell processes; a persistent interactive PTY is not part of this first version.
+After explicit plan approval, WTAgent snapshots the workspace before implementation (maximum 8,000 regular files / 128 MiB; dependency and generated folders are excluded). After a successful run, a changed-file manifest is finalized and a rollback action appears in chat. Rollback verifies every affected file against the agent output before restoring anything; if any affected file has changed since completion, the entire rollback is refused. New files are removed and modified/deleted files are restored. Users should not edit the workspace while the agent is running: concurrent edits made during the run cannot be distinguished reliably from agent edits. Interrupted runs do not expose automatic rollback because partial agent writes cannot safely be distinguished from concurrent user edits.
+
+### Autonomous completion integrity
+
+A completed provider/model turn is not proof that the requested engineering task is correct. After an approved autonomous implementation turn ends, WTAgent persists the workflow as `verification_required`, not `completed`, and displays a verification notice. Resuming that session without a new instruction does not silently restart the model or promote the task to completed. The user must inspect the final diff and run the relevant project checks before treating the work as accepted. The UI then allows a bounded user attestation note; this records `phase: accepted` and `verificationStatus: user_attested`, not a machine-verified pass.
+
+This is an intentional fail-closed boundary, not an automated test verdict. At this stage WTAgent does not yet parse arbitrary project acceptance criteria or independently certify every test command. A later verification engine must collect structured, machine-observed evidence before automatic completion can be enabled.
+
+## Notes and current limitations
+
+- The shell process is persistent across sequential commands, but it is not backed by a native PTY. A foreground command occupies the shell until it exits; for a background dev server, use `start /B ...` in CMD, `Start-Process ...` in PowerShell, or `... &` in Bash. Full-screen terminal programs, raw keyboard modes, and rich terminal emulation (for example `vim` or `top`) are not supported reliably. Stop ends the shell process.
+- The Git panel performs local operations only. It does not push, fetch, or publish to a remote.
+- Provider profile status means that a local profile folder exists; it does not prove that the provider is signed in. WTAgent still asks you to complete login in its browser when required.
+- The preferred-model field is a note for your own reference. WTAgent does not automatically select model names on provider websites; choose the actual model in the provider browser.
+- Plan only restricts WTAgent tools whose declared risk is not read-only. It cannot prevent a user from changing files manually in the editor or terminal outside the agent.
 - The editor currently opens text files up to 2 MB.
-- The app saves WTAgent session state and provider browser profiles under Electron's user-data directory.
-- This desktop integration is an initial implementation. Exercise it with a disposable project before relying on it for important work, and review agent approval prompts before allowing file or command operations.
+- WTAgent session state, provider browser profiles, and desktop UI preferences are stored locally under Electron's user-data directory. A resumed session may need the provider browser to reconnect or authenticate.
+- Plan approval is a scope checkpoint, not a guarantee that a proposed change is correct. Review the plan, monitor per-tool approvals, and inspect the final Git diff before accepting the result.
+- Exercise the app with a disposable project before relying on it for important work. Review approval prompts before allowing agent file or process operations.

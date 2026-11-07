@@ -162,6 +162,40 @@ test("a fully valid tool turn resets the consecutive protocol retry budget", asy
   assert.deepEqual(events.filter((e) => e.type === "protocol.invalid").map((e) => e.payload.count), [1, 1]);
 });
 
+test("initial bootstrap uses explicit instruction while retaining the original session task", async (t) => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), "wtagent-bootstrap-instruction-"));
+  const projectRoot = path.join(base, "project");
+  const tasksDir = path.join(base, "sessions");
+  await fs.mkdir(projectRoot);
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+
+  const originalTask = "RAW_USER_TASK";
+  const explicitInstruction = "STRICT_PLAN_INSTRUCTION\n\nUSER REQUEST:\nRAW_USER_TASK";
+  const session = await TaskSession.create({
+    tasksDir,
+    task: originalTask,
+    projectRoot,
+    mode: null,
+  });
+  const adapter = new FakeWebModelAdapter([
+    "<agent_response><done>true</done><message>Plan ready.</message></agent_response>",
+  ]);
+  const runtime = new AgentRuntime({
+    session,
+    adapter,
+    registry: createDefaultToolRegistry(),
+    policy: new PolicyEngine(),
+    approval: async () => false,
+  });
+
+  const result = await runtime.run({ instruction: explicitInstruction });
+
+  assert.equal(result.message, "Plan ready.");
+  assert.match(adapter.sentMessages[0], /STRICT_PLAN_INSTRUCTION/);
+  assert.match(adapter.sentMessages[0], /RAW_USER_TASK/);
+  assert.equal(session.state.task, originalTask);
+});
+
 test("runs a full model-tool-model loop", async (t) => {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), "wtagent-runtime-"));
   const projectRoot = path.join(base, "project");

@@ -142,9 +142,9 @@ Multiline paste and `↑` / `↓` input history are supported. Press `Ctrl+C` or
 
 ## Desktop IDE (preview)
 
-WTAgent also includes an Electron desktop workspace with a Monaco editor, file explorer, AI-agent chat, approval prompts, and a project command runner.
+WTAgent also includes WTAgent Studio, an Electron desktop IDE with Monaco editor, persistent shell, Git source control, plan/implement/verify workflows, saved and resumable sessions, and a provider-profile manager.
 
-See [desktop/README.md](./desktop/README.md) for setup and installer build instructions.
+See [desktop/README.md](./desktop/README.md) for feature details, limitations, setup, and installer build instructions.
 
 ```bash
 npm ci

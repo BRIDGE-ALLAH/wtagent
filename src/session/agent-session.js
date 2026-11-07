@@ -89,7 +89,10 @@ function persistenceLockMutexPorts(directory) {
     const digest = createHash("sha256")
       .update(`${resolved}\0state-lock\0${index}`)
       .digest();
-    ports.add(41_000 + (digest.readUInt16BE(0) % 20_000));
+    // Stay below the default dynamic/excluded TCP port ranges used by
+    // Windows. Ports in those ranges can fail to bind with EACCES even when
+    // no WTAgent process owns them, making session persistence flaky.
+    ports.add(20_000 + (digest.readUInt16BE(0) % 12_000));
   }
   return [...ports];
 }
@@ -1437,7 +1440,7 @@ export class AgentSession {
     await this.update({ pendingToolResult: null });
   }
 
-  async appendInstruction(instruction, { files = [] } = {}) {
+  async appendInstruction(instruction, { files = [], statePatch = null } = {}) {
     const item = {
       instruction,
       createdAt: new Date().toISOString(),
@@ -1448,9 +1451,20 @@ export class AgentSession {
         path: file.path ?? null,
       }));
     }
+    if (
+      statePatch !== null
+      && (!statePatch || typeof statePatch !== "object" || Array.isArray(statePatch))
+    ) {
+      throw new TypeError("Instruction state checkpoint must be a plain object.");
+    }
+    const checkpoint = statePatch === null ? null : structuredClone(statePatch);
+    if (checkpoint && ["followUps", "stateRevision", "updatedAt"].some((key) => key in checkpoint)) {
+      throw new Error("Instruction checkpoint cannot replace session-managed fields.");
+    }
     await this.#mutateState((nextState) => {
       nextState.followUps.push(structuredClone(item));
       nextState.lastError = null;
+      if (checkpoint) Object.assign(nextState, checkpoint);
     });
     await this.appendEvent("session.instruction_added", item);
   }

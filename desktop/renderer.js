@@ -10,6 +10,12 @@ let savedContent = "";
 let agentStarted = false;
 let agentBusy = false;
 let currentTerminalJob = null;
+let currentSessionId = "";
+let chatHistory = [];
+let restoringChat = false;
+let terminalHistory = [];
+let terminalHistoryIndex = -1;
+let gitState = { isRepo: false, branch: "", branches: [], changes: [] };
 const monacoReadyPromise = window.monaco
   ? Promise.resolve()
   : new Promise((resolve) => window.addEventListener("monaco-ready", resolve, { once: true }));
@@ -26,6 +32,75 @@ function setAgentStatus(text, mode = "ready") {
   agentBusy = mode === "busy";
   $("#cancel-agent").disabled = !agentBusy;
   $("#send-agent").disabled = agentBusy;
+  $("#agent-mode").disabled = agentBusy;
+}
+
+function persistChat() {
+  if (!currentSessionId || restoringChat) return;
+  try {
+    localStorage.setItem("wtagent.chat." + currentSessionId, JSON.stringify(chatHistory.slice(-160)));
+  } catch {}
+}
+
+function recordChat(item) {
+  if (restoringChat) return;
+  chatHistory.push(item);
+  if (chatHistory.length > 160) chatHistory = chatHistory.slice(-160);
+  persistChat();
+}
+
+function restoreChat(sessionId, fallbackTask = "") {
+  restoringChat = true;
+  currentSessionId = sessionId;
+  chatHistory = [];
+  $("#chat-feed").replaceChildren();
+  try {
+    const stored = JSON.parse(localStorage.getItem("wtagent.chat." + sessionId) || "[]");
+    if (Array.isArray(stored)) {
+      chatHistory = stored.slice(-160);
+      for (const item of chatHistory) {
+        if (item.type === "message") renderStoredMessage(item);
+        else if (item.type === "activity") renderStoredActivity(item);
+      }
+    }
+  } catch {
+    chatHistory = [];
+  }
+  restoringChat = false;
+  if (!chatHistory.length) {
+    appendMessage("system", fallbackTask ? "Melanjutkan: " + fallbackTask : "Sesi dipulihkan. Riwayat tampilan lokal sebelumnya tidak tersedia, tetapi konteks percakapan tetap berada di akun provider.");
+  }
+}
+
+function renderStoredMessage(item) {
+  const intro = $(".agent-intro");
+  if (intro) intro.remove();
+  const node = document.createElement("div");
+  node.className = "message " + item.role + (item.kind ? " " + item.kind : "");
+  const label = document.createElement("div");
+  label.className = "message-label";
+  label.textContent = item.role === "user" ? "You" : item.role === "assistant" ? "WTAgent" : "System";
+  const body = document.createElement("div");
+  body.className = "message-body";
+  body.textContent = String(item.text ?? "");
+  node.append(label, body);
+  $("#chat-feed").append(node);
+}
+
+function renderStoredActivity(item) {
+  const card = document.createElement("div");
+  card.className = "activity-card";
+  const heading = document.createElement("div");
+  heading.className = "activity-title";
+  heading.textContent = "◈ " + item.title;
+  card.append(heading);
+  if (item.detail) {
+    const content = document.createElement("div");
+    content.className = "activity-detail";
+    content.textContent = item.detail;
+    card.append(content);
+  }
+  $("#chat-feed").append(card);
 }
 
 function appendMessage(role, text, kind = "") {
@@ -42,6 +117,7 @@ function appendMessage(role, text, kind = "") {
   item.append(label, body);
   $("#chat-feed").append(item);
   $("#chat-feed").scrollTop = $("#chat-feed").scrollHeight;
+  recordChat({ type: "message", role, text: String(text ?? ""), kind });
   return item;
 }
 
@@ -61,6 +137,7 @@ function appendActivity(title, detail = "") {
   $("#chat-feed").append(card);
   while ($("#chat-feed").children.length > 80) $("#chat-feed").firstElementChild.remove();
   $("#chat-feed").scrollTop = $("#chat-feed").scrollHeight;
+  recordChat({ type: "activity", title, detail: typeof detail === "string" ? detail : JSON.stringify(detail, null, 2) });
   return card;
 }
 
@@ -81,6 +158,111 @@ function showProviderSelection(payload) {
     appendActivity("Model dipilih", "WTAgent melanjutkan tugas.");
   });
   card.append(title, desc, button);
+  $("#chat-feed").append(card);
+  $("#chat-feed").scrollTop = $("#chat-feed").scrollHeight;
+}
+
+function showAutonomousVerification(payload, ready = true) {
+  $(".autonomous-verification-card")?.remove();
+  const card = document.createElement("section");
+  card.className = "autonomous-plan-card autonomous-verification-card";
+  const heading = document.createElement("div");
+  heading.className = "autonomous-plan-heading";
+  heading.textContent = "Verifikasi hasil diperlukan";
+  const summary = document.createElement("p");
+  summary.className = "autonomous-plan-summary";
+  summary.textContent = "Implementasi telah berhenti, tetapi WTAgent belum menganggap task berhasil. Periksa diff, jalankan test/build yang relevan, lalu catat perintah dan hasil yang benar-benar Anda periksa.";
+  const button = document.createElement("button");
+  button.className = "button primary";
+  button.type = "button";
+  button.disabled = !ready;
+  button.textContent = ready ? "Saya sudah memeriksa hasil" : "Menunggu agent berhenti…";
+  button.addEventListener("click", async () => {
+    const note = window.prompt("Tuliskan perintah verifikasi yang benar-benar dijalankan, hasilnya, dan bahwa Anda telah memeriksa final diff. Catatan ini menjadi attestasi pengguna (maksimum 4 KB).");
+    if (note == null) return;
+    button.disabled = true;
+    try {
+      await api.acceptAutonomousVerification(note);
+      card.remove();
+      appendActivity("Hasil diterima pengguna", note);
+    } catch (error) {
+      appendMessage("system", "Hasil belum dapat diterima: " + error.message, "error");
+      button.disabled = false;
+    }
+  });
+  card.append(heading, summary, button);
+  $("#chat-feed").append(card);
+  $("#chat-feed").scrollTop = $("#chat-feed").scrollHeight;
+}
+
+function showWorkspaceRollback(payload) {
+  $(".workspace-rollback-card")?.remove();
+  const card=document.createElement("section");card.className="autonomous-plan-card workspace-rollback-card";
+  const heading=document.createElement("div");heading.className="autonomous-plan-heading";heading.textContent="Checkpoint workspace tersedia";
+  const detail=document.createElement("p");detail.className="autonomous-plan-summary";detail.textContent=(payload.changedFiles??0)+" file berubah. Jangan edit workspace selama agent berjalan. Rollback hanya berjalan jika file yang berubah belum diedit lagi setelah agent selesai.";
+  const button=document.createElement("button");button.className="button secondary";button.type="button";button.textContent="Rollback perubahan agent";
+  button.addEventListener("click",async()=>{if(!confirm("Pulihkan file yang diubah agent ke kondisi sebelum implementasi? Jika ada file diedit setelah agent selesai, rollback akan dibatalkan."))return;button.disabled=true;try{const result=await api.rollbackWorkspaceCheckpoint();detail.textContent="Rollback selesai. "+result.restoredFiles+" file dipulihkan.";button.remove();await refreshFiles();await refreshGitStatus();reloadActiveFileIfClean();appendActivity("Workspace di-rollback",result.restoredFiles+" file dipulihkan.");}catch(error){detail.textContent=error.message+(error.conflicts?.length?"\nKonflik: "+error.conflicts.join(", "):"");button.disabled=false;}});
+  card.append(heading,detail,button);$("#chat-feed").append(card);$("#chat-feed").scrollTop=$("#chat-feed").scrollHeight;
+}
+
+function showAutonomousPlan(payload) {
+  const plan = String(payload.plan ?? "").trim();
+  if (!plan) return;
+  $(".autonomous-plan-card")?.remove();
+  const card = document.createElement("section");
+  card.className = "autonomous-plan-card";
+  const heading = document.createElement("div");
+  heading.className = "autonomous-plan-heading";
+  heading.textContent = "Rencana autonomous siap ditinjau";
+  const summary = document.createElement("p");
+  summary.className = "autonomous-plan-summary";
+  summary.textContent = "Fase perencanaan bersifat read-only. Perubahan kode belum dijalankan. Periksa lingkup dan langkah sebelum menyetujui implementasi.";
+  const content = document.createElement("pre");
+  content.className = "autonomous-plan-content";
+  content.textContent = plan;
+  const fingerprint = document.createElement("div");
+  fingerprint.className = "autonomous-plan-fingerprint";
+  fingerprint.textContent = payload.planSha256 ? "SHA-256: " + payload.planSha256 : "";
+  const actions = document.createElement("div");
+  actions.className = "autonomous-plan-actions";
+  const approve = document.createElement("button");
+  approve.className = "button primary";
+  approve.type = "button";
+  approve.textContent = "Setujui rencana & mulai implementasi";
+  const reject = document.createElement("button");
+  reject.className = "button secondary";
+  reject.type = "button";
+  reject.textContent = "Tolak rencana";
+  approve.addEventListener("click", async () => {
+    approve.disabled = true;
+    reject.disabled = true;
+    setAgentStatus("Implementasi berjalan…", "busy");
+    appendActivity("Rencana disetujui", "Implementasi dimulai. Persetujuan per tool dan batasan keamanan tetap berlaku.");
+    try {
+      await api.approveAutonomousPlan();
+    } catch (error) {
+      appendMessage("system", "Implementasi tidak dapat dilanjutkan: " + error.message, "error");
+      setAgentStatus("Implementasi terhenti", "error");
+      approve.disabled = false;
+      reject.disabled = false;
+    }
+  });
+  reject.addEventListener("click", async () => {
+    approve.disabled = true;
+    reject.disabled = true;
+    try {
+      await api.rejectAutonomousPlan();
+      card.remove();
+      appendMessage("system", "Rencana ditolak. WTAgent tidak menjalankan implementasi dari rencana ini.", "notice");
+      setAgentStatus("Rencana ditolak");
+    } catch (error) {
+      appendMessage("system", "Rencana belum dapat ditolak: " + error.message, "error");
+      approve.disabled = false;
+      reject.disabled = false;
+    }
+  });
+  actions.append(approve, reject);
+  card.append(heading, summary, content, fingerprint, actions);
   $("#chat-feed").append(card);
   $("#chat-feed").scrollTop = $("#chat-feed").scrollHeight;
 }
@@ -120,6 +302,260 @@ function showApproval(payload) {
   card.append(title, reason, detail, actions);
   $("#chat-feed").append(card);
   $("#chat-feed").scrollTop = $("#chat-feed").scrollHeight;
+}
+
+
+function getProviderPreferences() {
+  try {
+    const value = JSON.parse(localStorage.getItem("wtagent.provider-preferences") || "{}");
+    return { defaultProvider: value.defaultProvider || "chatgpt", providers: value.providers || {} };
+  } catch {
+    return { defaultProvider: "chatgpt", providers: {} };
+  }
+}
+
+function saveProviderPreferences(value) {
+  localStorage.setItem("wtagent.provider-preferences", JSON.stringify(value));
+}
+
+async function openModelsManager() {
+  $("#models-modal").classList.remove("hidden");
+  const preferences = getProviderPreferences();
+  const select = $("#models-default-provider");
+  select.replaceChildren();
+  for (const option of $("#provider-select").options) {
+    select.add(new Option(option.textContent, option.value));
+  }
+  select.value = preferences.defaultProvider;
+  try {
+    const profiles = await api.providerProfiles();
+    const host = $("#provider-profile-list");
+    host.replaceChildren();
+    for (const profile of profiles) {
+      const card = document.createElement("div");
+      card.className = "provider-profile-card";
+      const top = document.createElement("div");
+      top.className = "provider-profile-top";
+      const name = document.createElement("span");
+      name.className = "provider-profile-name";
+      name.textContent = profile.label;
+      const status = document.createElement("span");
+      status.className = "provider-profile-state" + (profile.exists ? "" : " missing");
+      status.textContent = profile.exists ? "Folder profil ada" : "Belum dibuat";
+      top.append(name, status);
+      const directory = document.createElement("div");
+      directory.className = "provider-profile-path";
+      directory.textContent = profile.directory;
+      const controls = document.createElement("div");
+      controls.className = "provider-profile-controls";
+      const model = document.createElement("input");
+      model.className = "provider-model-note";
+      model.placeholder = "Catatan model favorit";
+      model.value = preferences.providers[profile.id]?.modelName || "";
+      model.dataset.provider = profile.id;
+      model.addEventListener("change", () => {
+        const current = getProviderPreferences();
+        current.providers[profile.id] = { ...(current.providers[profile.id] || {}), modelName: model.value.trim() };
+        saveProviderPreferences(current);
+      });
+      const open = document.createElement("button");
+      open.textContent = "Buka folder";
+      open.addEventListener("click", async () => {
+        const error = await api.openProviderProfile(profile.id);
+        if (error) alert(error);
+      });
+      controls.append(model, open);
+      card.append(top, directory, controls);
+      host.append(card);
+    }
+  } catch (error) {
+    $("#provider-profile-list").textContent = "Gagal memuat profil: " + error.message;
+  }
+}
+
+async function loadSessions() {
+  const host = $("#session-list");
+  host.replaceChildren();
+  try {
+    const sessions = await api.listSessions();
+    if (!sessions.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-tree";
+      empty.textContent = "Belum ada sesi WTAgent yang tersimpan.";
+      host.append(empty);
+      return;
+    }
+    for (const session of sessions) {
+      const button = document.createElement("button");
+      button.className = "session-entry";
+      const main = document.createElement("div");
+      main.className = "session-entry-main";
+      const title = document.createElement("div");
+      title.className = "session-entry-title";
+      title.textContent = session.task || "Sesi tanpa judul";
+      const meta = document.createElement("div");
+      meta.className = "session-entry-meta";
+      meta.textContent = [session.provider, session.phase, session.updatedAt ? new Date(session.updatedAt).toLocaleString() : "", session.projectRoot].filter(Boolean).join(" · ");
+      main.append(title, meta);
+      const state = document.createElement("span");
+      state.className = "session-entry-state";
+      state.textContent = session.recoveryRequired ? "Recovery" : session.sessionId === currentSessionId ? "Aktif" : "Lanjutkan";
+      button.append(main, state);
+      button.addEventListener("click", () => resumeSession(session));
+      host.append(button);
+    }
+  } catch (error) {
+    const item = document.createElement("div");
+    item.className = "empty-tree";
+    item.textContent = "Gagal memuat sesi: " + error.message;
+    host.append(item);
+  }
+}
+
+async function resumeSession(session) {
+  if (!session.projectRoot) return alert("Sesi ini tidak memiliki folder proyek.");
+  try {
+    $("#sessions-modal").classList.add("hidden");
+    await setWorkspace(session.projectRoot);
+    $("#provider-select").value = session.provider || "chatgpt";
+    $("#generation-select").value = session.generationType || "agent";
+    $("#generation-select").disabled = $("#provider-select").value !== "gemini";
+    $("#agent-mode").value = session.workflowMode || "agent";
+    restoreChat(session.sessionId, session.task);
+    agentStarted = false;
+    setAgentStatus(session.recoveryRequired ? "Memulihkan handoff…" : "Membuka sesi…", "busy");
+    $("#provider-select").disabled = true;
+    $("#generation-select").disabled = true;
+    await api.resumeAgent({ sessionId: session.sessionId, workflowMode: session.workflowMode || "agent" });
+    await refreshGitStatus();
+  } catch (error) {
+    setAgentStatus("Gagal membuka sesi", "error");
+    appendMessage("system", error.message, "error");
+  }
+}
+
+async function openSessionsManager() {
+  $("#sessions-modal").classList.remove("hidden");
+  await loadSessions();
+}
+
+async function startNewSession() {
+  if (agentBusy) {
+    alert("Tunggu atau batalkan proses agent sebelum memulai sesi baru.");
+    return;
+  }
+  if (currentSessionId && !confirm("Simpan sesi saat ini dan mulai percakapan baru?")) return;
+  try {
+    await api.resetAgent();
+    currentSessionId = "";
+    chatHistory = [];
+    agentStarted = false;
+    $("#provider-select").disabled = false;
+    $("#generation-select").disabled = $("#provider-select").value !== "gemini";
+    $("#agent-mode").disabled = false;
+    $("#chat-feed").replaceChildren();
+    appendMessage("system", "Sesi baru siap. Riwayat sesi sebelumnya tetap tersimpan dan dapat dibuka dari tombol Sesi.");
+    setAgentStatus(workspace ? "Workspace siap · pilih tugas" : "Ready · pilih workspace");
+  } catch (error) {
+    appendMessage("system", error.message, "error");
+  }
+}
+
+async function refreshGitStatus() {
+  const note = $("#git-status-note");
+  if (!workspace) {
+    note.textContent = "Buka folder proyek untuk melihat Git.";
+    $("#git-changes").textContent = "Belum ada workspace.";
+    return;
+  }
+  note.textContent = "Memeriksa Git…";
+  try {
+    gitState = await api.gitStatus(workspace);
+    const select = $("#git-branch-select");
+    const previous = select.value;
+    select.replaceChildren();
+    for (const branch of gitState.branches) select.add(new Option(branch, branch));
+    if (gitState.branch && !gitState.branches.includes(gitState.branch)) select.add(new Option(gitState.branch, gitState.branch));
+    select.value = gitState.branch || "";
+    if (previous && gitState.branches.includes(previous) && previous === gitState.branch) select.value = previous;
+    $("#status-branch").textContent = gitState.branch ? "⑂ " + gitState.branch : "⑂";
+    $("#git-stage-all").disabled = !gitState.isRepo || !gitState.changes.length;
+    $("#git-commit-message").disabled = !gitState.isRepo;
+    $("#git-commit-form button").disabled = !gitState.isRepo;
+    renderGitChanges();
+    note.textContent = !gitState.isRepo ? gitState.error || "Folder ini bukan repository Git." : gitState.changes.length + " perubahan · " + gitState.branches.length + " branch";
+  } catch (error) {
+    note.textContent = error.message;
+  }
+}
+
+function renderGitChanges() {
+  const host = $("#git-changes");
+  host.replaceChildren();
+  if (!gitState.isRepo) {
+    const empty = document.createElement("div");
+    empty.className = "empty-tree";
+    empty.textContent = gitState.error || "Bukan repository Git.";
+    host.append(empty);
+    return;
+  }
+  if (!gitState.changes.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-tree";
+    empty.textContent = "Working tree bersih.";
+    host.append(empty);
+    return;
+  }
+  for (const change of gitState.changes) {
+    const row = document.createElement("div");
+    row.className = "git-change-row";
+    const open = document.createElement("button");
+    open.className = "git-change-open";
+    open.title = "Lihat diff";
+    const file = document.createElement("span");
+    file.className = "git-change-path";
+    file.textContent = change.path;
+    const status = document.createElement("span");
+    status.className = "git-change-status";
+    status.textContent = change.status;
+    open.append(file, status);
+    open.addEventListener("click", () => showGitDiff(change.path));
+    const stage = document.createElement("button");
+    stage.className = "git-change-action";
+    stage.title = change.staged ? "Unstage" : "Stage";
+    stage.textContent = change.staged ? "−" : "+";
+    stage.addEventListener("click", async () => {
+      try {
+        await api.gitStage(workspace, change.path, !change.staged);
+        await refreshGitStatus();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+    row.append(open, stage);
+    host.append(row);
+  }
+}
+
+async function showGitDiff(filePath) {
+  try {
+    const result = await api.gitDiff(workspace, filePath);
+    $("#diff-title").textContent = result.path;
+    $("#diff-content").textContent = result.diff;
+    $("#diff-view").classList.remove("hidden");
+    if (editor) $("#editor-host").style.display = "none";
+  } catch (error) {
+    alert("Gagal membuka diff: " + error.message);
+  }
+}
+
+function showSidebarView(view) {
+  const isGit = view === "git";
+  $("#explorer-view").classList.toggle("hidden", isGit);
+  $("#git-panel").classList.toggle("hidden", !isGit);
+  $("#explorer-tab").classList.toggle("active", !isGit);
+  $("#source-control-tab").classList.toggle("active", isGit);
+  if (isGit) refreshGitStatus();
 }
 
 function getLanguage(filePath) {
@@ -284,6 +720,7 @@ async function saveFile() {
     $("#active-tab").textContent = activeFile.split("/").pop();
     setSaveStatus("Saved");
     await refreshFiles();
+    await refreshGitStatus();
   } catch (error) {
     appendMessage("system", "Gagal menyimpan: " + error.message, "error");
     setSaveStatus("Save failed");
@@ -306,6 +743,10 @@ async function chooseWorkspace() {
 
 async function setWorkspace(workspacePath, name = "") {
   const result = await api.validateWorkspace(workspacePath);
+  if (workspace && workspace !== result.path && currentTerminalJob) {
+    await api.stopTerminal(currentTerminalJob).catch(() => {});
+    finishTerminal();
+  }
   workspace = result.path;
   localStorage.setItem("wtagent.workspace", workspace);
   const title = name || result.name;
@@ -313,6 +754,7 @@ async function setWorkspace(workspacePath, name = "") {
   $("#project-label").textContent = title.toUpperCase();
   $("#status-project").textContent = title;
   await refreshFiles();
+  await refreshGitStatus();
   setAgentStatus(agentStarted ? "Session aktif · " + $("#provider-select").value : "Workspace siap · pilih tugas");
 }
 
@@ -329,6 +771,18 @@ async function createFile() {
   }
 }
 
+function buildWorkflowInstruction(promptText) {
+  const mode = $("#agent-mode").value;
+  if (mode === "plan") {
+    return "WORKFLOW: PLAN ONLY\nInspect the project and relevant files, then produce a concise implementation plan with affected files, dependencies, risks, and verification steps. Do not edit, create, delete, or execute project files. Wait for the user's approval before implementation.\n\nUSER REQUEST:\n" + promptText;
+  }
+  if (mode === "autonomous") return promptText;
+  if (mode === "verify") {
+    return "WORKFLOW: PLAN, IMPLEMENT, AND VERIFY\nFirst inspect the relevant project structure and state a concise plan. Then implement the requested change across all necessary files. Run the most relevant tests, type checks, lint/build commands available in this project, inspect the final diff, and report exactly what passed or failed. Do not claim tests passed unless you ran them. Preserve existing user changes and ask for approval for sensitive tool actions.\n\nUSER REQUEST:\n" + promptText;
+  }
+  return promptText;
+}
+
 async function sendAgent() {
   const promptText = $("#agent-prompt").value.trim();
   if (!promptText || agentBusy) return;
@@ -338,25 +792,27 @@ async function sendAgent() {
   }
   $("#agent-prompt").value = "";
   appendMessage("user", promptText);
+  const instruction = buildWorkflowInstruction(promptText);
   setAgentStatus("Memproses tugas…", "busy");
   $("#provider-select").disabled = true;
   $("#generation-select").disabled = true;
   try {
     if (!agentStarted) {
-      agentStarted = true;
       await api.startAgent({
         projectRoot: workspace,
         model: $("#provider-select").value,
         generationType: $("#provider-select").value === "gemini" ? $("#generation-select").value : "agent",
-        instruction: promptText
+        workflowMode: $("#agent-mode").value,
+        instruction
       });
     } else {
-      await api.sendAgent(promptText);
+      await api.sendAgent(instruction, $("#agent-mode").value);
     }
     if (!agentBusy) setAgentStatus("Session siap");
   } catch (error) {
-    appendMessage("assistant", error.message, "error");
-    setAgentStatus("Terjadi kesalahan", "error");
+    // The service emits desktop.agent_error with the provider/runtime detail.
+    // Avoid showing the same exception twice when the IPC call also rejects.
+    if (!agentStarted) setAgentStatus("Gagal memulai agent", "error");
   } finally {
     $("#provider-select").disabled = agentStarted;
     $("#generation-select").disabled = agentStarted;
@@ -375,17 +831,23 @@ function writeTerminal(text, className = "") {
 
 async function runTerminalCommand(command) {
   if (!workspace) return alert("Buka folder proyek terlebih dahulu.");
-  if (currentTerminalJob) return;
+  const text = String(command ?? "");
+  if (!text.trim()) return;
   $("#terminal-panel").classList.remove("hidden");
   $("#terminal-command").value = "";
-  $("#terminal-command").disabled = true;
-  $("#terminal-run").disabled = true;
-  $("#terminal-cancel").disabled = false;
-  $("#terminal-status").textContent = "Running…";
-  writeTerminal("$ " + command, "command-line");
+  terminalHistory.push(text);
+  terminalHistoryIndex = terminalHistory.length;
+  writeTerminal((currentTerminalJob ? "" : "[terminal baru] ") + text, "command-line");
   try {
-    const job = await api.runCommand(workspace, command);
-    currentTerminalJob = job.id;
+    if (!currentTerminalJob) {
+      $("#terminal-status").textContent = "Starting shell…";
+      const shell = $("#terminal-shell").value;
+      const result = await api.startTerminal(workspace, shell);
+      currentTerminalJob = result.id;
+    }
+    await api.writeTerminal(currentTerminalJob, text + "\n");
+    $("#terminal-status").textContent = "Shell aktif";
+    $("#terminal-cancel").disabled = false;
   } catch (error) {
     writeTerminal(error.message, "error-line");
     finishTerminal();
@@ -394,21 +856,25 @@ async function runTerminalCommand(command) {
 
 function finishTerminal() {
   currentTerminalJob = null;
-  $("#terminal-command").disabled = false;
-  $("#terminal-run").disabled = false;
   $("#terminal-cancel").disabled = true;
-  $("#terminal-status").textContent = "Command runner";
+  $("#terminal-status").textContent = "Shell stopped";
   $("#terminal-command").focus();
 }
 
 api.onTerminalEvent((event) => {
+  if (event.type === "started") {
+    currentTerminalJob = event.id;
+    $("#terminal-status").textContent = "Shell aktif";
+    $("#terminal-cancel").disabled = false;
+  }
   if (event.type === "data") writeTerminal(event.data, event.stream === "stderr" ? "error-line" : "");
-  if (event.type === "started") currentTerminalJob = event.id;
   if (event.type === "error") writeTerminal(event.message, "error-line");
   if (event.type === "exit") {
-    writeTerminal("[process exited · code " + event.code + "]", "exit-line");
+    if (currentTerminalJob && event.id !== currentTerminalJob) return;
+    writeTerminal("[shell stopped · code " + event.code + "]", "exit-line");
     finishTerminal();
     refreshFiles();
+    refreshGitStatus();
   }
 });
 
@@ -416,17 +882,73 @@ api.onAgentEvent((event) => {
   const payload = event.payload || {};
   switch (event.type) {
     case "desktop.session_started":
-      appendActivity("Session dimulai", payload.sessionId);
+      if (payload.resumed && currentSessionId !== payload.sessionId) {
+        restoreChat(payload.sessionId, payload.task || "");
+      }
+      currentSessionId = payload.sessionId || currentSessionId;
+      agentStarted = true;
+      $("#provider-select").disabled = true;
+      $("#generation-select").disabled = true;
+      if (payload.provider) $("#provider-select").value = payload.provider;
+      if (payload.workflowMode) $("#agent-mode").value = payload.workflowMode;
+      appendActivity(payload.resumed ? "Sesi dipulihkan" : "Session dimulai", payload.sessionId);
+      if (payload.autonomousWorkflow?.phase === "awaiting_approval") showAutonomousPlan(payload.autonomousWorkflow);
+      if (payload.autonomousWorkflow?.phase === "plan_failed") appendMessage("system", payload.autonomousWorkflow.lastError || "Rencana autonomous gagal dibuat. Kirim ulang tugas untuk mencoba lagi.", "error");
+      if (payload.autonomousWorkflow?.phase === "verification_required") showAutonomousVerification(payload.autonomousWorkflow, true);
+      if (payload.autonomousWorkflow?.phase === "accepted") appendMessage("system", "Hasil autonomous telah diterima berdasarkan pemeriksaan pengguna. Catatan: " + (payload.autonomousWorkflow.verificationSummary || "tidak tersedia"), "notice");
+      if (payload.recoveryRequired) appendMessage("system", "Sesi memiliki operasi browser yang statusnya belum pasti. WTAgent akan melakukan bare recovery terlebih dahulu; jangan mengirim ulang instruksi yang sama sebelum proses ini selesai.", "notice");
+      persistChat();
+      break;
+    case "desktop.plan_ready":
+      showAutonomousPlan(payload);
+      appendActivity("Rencana autonomous tersimpan", "Workspace belum diubah oleh fase perencanaan.");
+      break;
+    case "desktop.plan_failed":
+      appendMessage("system", payload.message || "Rencana autonomous gagal dibuat.", "error");
+      break;
+    case "desktop.plan_approved":
+      $(".autonomous-plan-card")?.remove();
+      appendActivity("Persetujuan rencana dicatat", "Implementasi berjalan dengan persetujuan tool normal.");
+      break;
+    case "desktop.plan_rejected":
+      $(".autonomous-plan-card")?.remove();
+      appendActivity("Rencana ditolak", "Tidak ada implementasi dijalankan dari rencana ini.");
+      break;
+    case "desktop.autonomous_verification_required":
+      showAutonomousVerification(payload, false);
+      appendActivity("Menunggu verifikasi hasil", "Selesainya giliran model bukan bukti bahwa acceptance criteria terpenuhi.");
+      break;
+    case "desktop.autonomous_accepted":
+      $(".autonomous-verification-card")?.remove();
+      appendMessage("system", "Hasil diterima berdasarkan attestasi pengguna. WTAgent tidak memverifikasi kebenaran catatan secara independen.", "notice");
+      appendActivity("Hasil diterima pengguna", payload.verificationSummary || "");
+      break;
+    case "desktop.workspace_checkpointed":
+      showWorkspaceRollback(payload);
+      appendActivity("Checkpoint workspace tersimpan",payload.changedFiles+" file perubahan agent dapat dipulihkan dengan pemeriksaan konflik.");
+      break;
+    case "desktop.workspace_rolled_back":
+      appendActivity("Rollback workspace selesai",payload.restoredFiles+" file dipulihkan.");
+      break;
+    case "desktop.workspace_checkpoint_failed":
+      appendMessage("system", "Implementasi selesai, tetapi checkpoint rollback tidak dapat difinalisasi: " + payload.message, "error");
       break;
     case "desktop.turn_started":
       setAgentStatus("Memproses tugas…", "busy");
       appendActivity("Agent mulai bekerja", payload.instruction || "");
       break;
-    case "desktop.turn_finished":
+    case "desktop.turn_finished": {
+      const verificationButton = $(".autonomous-verification-card button");
+      if (verificationButton) {
+        verificationButton.disabled = false;
+        verificationButton.textContent = "Saya sudah memeriksa hasil";
+      }
       setAgentStatus("Session siap");
       refreshFiles();
+      refreshGitStatus();
       reloadActiveFileIfClean();
       break;
+    }
     case "browser.started":
       setAgentStatus("Menghubungkan browser…", "busy");
       appendActivity("Membuka browser", payload.profileDir || "");
@@ -465,6 +987,7 @@ api.onAgentEvent((event) => {
     case "tool.result_sent":
       appendActivity("Hasil tool dikembalikan ke AI", payload.name || "");
       refreshFiles();
+      refreshGitStatus();
       reloadActiveFileIfClean();
       break;
     case "tool.invalid":
@@ -493,6 +1016,20 @@ $("#provider-select").addEventListener("change", () => {
   const isGemini = $("#provider-select").value === "gemini";
   $("#generation-select").disabled = agentStarted || !isGemini;
   if (!isGemini) $("#generation-select").value = "agent";
+  const preferences = getProviderPreferences();
+  preferences.defaultProvider = $("#provider-select").value;
+  saveProviderPreferences(preferences);
+});
+$("#generation-select").addEventListener("change", () => {
+  const preferences = getProviderPreferences();
+  preferences.providers[$("#provider-select").value] = {
+    ...(preferences.providers[$("#provider-select").value] || {}),
+    generationType: $("#generation-select").value
+  };
+  saveProviderPreferences(preferences);
+});
+$("#agent-mode").addEventListener("change", () => {
+  localStorage.setItem("wtagent.agent-mode", $("#agent-mode").value);
 });
 $("#generation-select").disabled = $("#provider-select").value !== "gemini";
 $("#refresh-files").addEventListener("click", refreshFiles);
@@ -513,17 +1050,99 @@ $("#cancel-agent").addEventListener("click", async () => {
 });
 $("#clear-chat").addEventListener("click", () => {
   $("#chat-feed").replaceChildren();
-  appendActivity("Tampilan chat dibersihkan", "Riwayat agent tetap tersimpan di sesi WTAgent.");
+  chatHistory = [];
+  persistChat();
+  appendActivity("Tampilan chat dibersihkan", "Riwayat provider tetap tersimpan di sesi WTAgent.");
 });
 $("#terminal-form").addEventListener("submit", (event) => {
   event.preventDefault();
   runTerminalCommand($("#terminal-command").value.trim());
 });
 $("#terminal-cancel").addEventListener("click", async () => {
-  if (currentTerminalJob) await api.cancelCommand(currentTerminalJob);
+  if (!currentTerminalJob) return;
+  $("#terminal-cancel").disabled = true;
+  await api.stopTerminal(currentTerminalJob);
+});
+$("#terminal-command").addEventListener("keydown", (event) => {
+  if (event.key === "ArrowUp" && terminalHistory.length) {
+    event.preventDefault();
+    terminalHistoryIndex = Math.max(0, terminalHistoryIndex - 1);
+    $("#terminal-command").value = terminalHistory[terminalHistoryIndex] || "";
+  } else if (event.key === "ArrowDown" && terminalHistory.length) {
+    event.preventDefault();
+    terminalHistoryIndex = Math.min(terminalHistory.length, terminalHistoryIndex + 1);
+    $("#terminal-command").value = terminalHistory[terminalHistoryIndex] || "";
+  }
 });
 $("#clear-terminal").addEventListener("click", () => $("#terminal-output").replaceChildren());
 $("#hide-terminal").addEventListener("click", () => $("#terminal-panel").classList.add("hidden"));
+$("#explorer-tab").addEventListener("click", () => showSidebarView("explorer"));
+$("#source-control-tab").addEventListener("click", () => showSidebarView("git"));
+$("#git-refresh").addEventListener("click", refreshGitStatus);
+$("#git-stage-all").addEventListener("click", async () => {
+  try {
+    await api.gitStageAll(workspace);
+    await refreshGitStatus();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+$("#git-branch-select").addEventListener("change", async () => {
+  const branch = $("#git-branch-select").value;
+  if (!branch || branch === gitState.branch) return;
+  try {
+    await api.gitCheckout(workspace, branch, false);
+    await refreshGitStatus();
+  } catch (error) {
+    alert("Tidak bisa berpindah branch: " + error.message);
+    await refreshGitStatus();
+  }
+});
+$("#git-new-branch").addEventListener("click", async () => {
+  const branch = prompt("Nama branch baru:");
+  if (!branch) return;
+  try {
+    await api.gitCheckout(workspace, branch, true);
+    await refreshGitStatus();
+  } catch (error) {
+    alert("Tidak bisa membuat branch: " + error.message);
+  }
+});
+$("#git-commit-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const message = $("#git-commit-message").value.trim();
+  if (!message) return alert("Isi pesan commit.");
+  try {
+    await api.gitCommit(workspace, message);
+    $("#git-commit-message").value = "";
+    await refreshGitStatus();
+    appendActivity("Git commit dibuat", message);
+  } catch (error) {
+    alert("Commit gagal: " + error.message);
+  }
+});
+$("#diff-close").addEventListener("click", () => {
+  $("#diff-view").classList.add("hidden");
+  if (editor && activeFile) $("#editor-host").style.display = "block";
+});
+$("#sessions-open").addEventListener("click", openSessionsManager);
+$("#sessions-close").addEventListener("click", () => $("#sessions-modal").classList.add("hidden"));
+$("#sessions-modal").addEventListener("click", (event) => {
+  if (event.target === $("#sessions-modal")) $("#sessions-modal").classList.add("hidden");
+});
+$("#models-open").addEventListener("click", openModelsManager);
+$("#models-close").addEventListener("click", () => $("#models-modal").classList.add("hidden"));
+$("#models-modal").addEventListener("click", (event) => {
+  if (event.target === $("#models-modal")) $("#models-modal").classList.add("hidden");
+});
+$("#models-default-provider").addEventListener("change", () => {
+  const preferences = getProviderPreferences();
+  preferences.defaultProvider = $("#models-default-provider").value;
+  saveProviderPreferences(preferences);
+  $("#provider-select").value = preferences.defaultProvider;
+  $("#provider-select").dispatchEvent(new Event("change"));
+});
+$("#new-session").addEventListener("click", startNewSession);
 document.querySelectorAll(".suggestion").forEach((button) => {
   button.addEventListener("click", () => {
     $("#agent-prompt").value = button.dataset.prompt || "";
@@ -539,6 +1158,11 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     $("#terminal-panel").classList.toggle("hidden");
   }
+  if (event.key === "Escape") {
+    $("#sessions-modal").classList.add("hidden");
+    $("#models-modal").classList.add("hidden");
+    $("#diff-view").classList.add("hidden");
+  }
 });
 
 window.addEventListener("monaco-ready", () => {
@@ -546,6 +1170,12 @@ window.addEventListener("monaco-ready", () => {
 });
 
 (async function boot() {
+  const preferences = getProviderPreferences();
+  if ([...$("#provider-select").options].some((option) => option.value === preferences.defaultProvider)) {
+    $("#provider-select").value = preferences.defaultProvider;
+  }
+  $("#agent-mode").value = localStorage.getItem("wtagent.agent-mode") || "agent";
+  $("#generation-select").disabled = $("#provider-select").value !== "gemini";
   if (workspace) {
     try {
       await setWorkspace(workspace);
@@ -554,4 +1184,5 @@ window.addEventListener("monaco-ready", () => {
       workspace = "";
     }
   }
+  await loadSessions();
 })();

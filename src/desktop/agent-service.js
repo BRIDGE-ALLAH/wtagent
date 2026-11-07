@@ -575,6 +575,9 @@ export class DesktopAgentService {
             toolCall,
             definition,
             projectRoot: this.session.state.projectRoot,
+            verificationPlan: this.autonomousVerificationPlan
+              ?? this.session.state.autonomousVerificationPlan
+              ?? null,
           });
         }
         if (shouldEnforceReadOnlyPolicy({

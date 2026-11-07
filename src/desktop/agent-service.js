@@ -35,6 +35,7 @@ import {
   storeAutonomousPlan,
 } from "./autonomous-workflow.js";
 import { WorkspaceCheckpoint } from "./workspace-checkpoint.js";
+import { createLifecycleGuard } from "./lifecycle-guard.js";
 
 function emitSafely(callback, event) {
   try {
@@ -64,6 +65,8 @@ export class DesktopAgentService {
     this.workspaceCheckpoint = null;
     this.running = false;
     this.closed = false;
+    this.cancelRequested = false;
+    this.lifecycleGuard = createLifecycleGuard();
   }
 
   #emit(type, payload = {}) {
@@ -73,6 +76,20 @@ export class DesktopAgentService {
       timestamp: new Date().toISOString(),
       payload,
     });
+  }
+
+  #denyPendingApprovals() {
+    const pending = [...this.pendingApprovals.values()];
+    this.pendingApprovals.clear();
+    for (const approval of pending) approval.resolve(false);
+  }
+
+  #assertOpen() {
+    if (this.closed) {
+      const error = new Error("Desktop agent service is closed.");
+      error.code = "DESKTOP_SERVICE_CLOSED";
+      throw error;
+    }
   }
 
   async #forwardRuntimeEvent(event) {
@@ -129,6 +146,8 @@ export class DesktopAgentService {
   }
 
   async start({ projectRoot, model = "chatgpt", instruction, generationType = "agent", workflowMode = "agent" }) {
+    const releaseLifecycle = this.lifecycleGuard.enter("start");
+    try { projectRoot, model = "chatgpt", instruction, generationType = "agent", workflowMode = "agent" }) {
     if (this.session) throw new Error("An agent session is already active.");
     assertNativeRuntimeSupported();
 
@@ -187,6 +206,10 @@ export class DesktopAgentService {
       files: attachmentResult.files,
     });
   }
+    } finally {
+      releaseLifecycle();
+    }
+  }
 
   async listSessions(limit = 40) {
     const appDataDir = path.resolve(getAppDataDir());
@@ -210,6 +233,8 @@ export class DesktopAgentService {
   }
 
   async resume({ sessionId, instruction = "", workflowMode = null }) {
+    const releaseLifecycle = this.lifecycleGuard.enter("resume");
+    try { sessionId, instruction = "", workflowMode = null }) {
     if (this.session) throw new Error("Tutup sesi aktif sebelum membuka sesi lain.");
     assertNativeRuntimeSupported();
     const appDataDir = path.resolve(getAppDataDir());
@@ -287,6 +312,10 @@ export class DesktopAgentService {
       files: attachmentResult.files,
     });
   }
+    } finally {
+      releaseLifecycle();
+    }
+  }
 
   #initializeRuntimeParts(appDataDir, generationType) {
     this.processManager = new ProcessManager();
@@ -324,6 +353,7 @@ export class DesktopAgentService {
   }
 
   async #requestApproval({ toolCall, reasons }) {
+    if (this.cancelRequested || this.closed) return false;
     const requestId = randomUUID();
     return await new Promise((resolve) => {
       this.pendingApprovals.set(requestId, { resolve, toolName: toolCall.name });
@@ -339,7 +369,15 @@ export class DesktopAgentService {
     const pending = this.pendingApprovals.get(requestId);
     if (!pending) return false;
     this.pendingApprovals.delete(requestId);
+    if (this.cancelRequested || this.closed) {
+      pending.resolve(false);
+      return true;
+    }
     await this.approvalStore.ensureLoaded();
+    if (this.cancelRequested || this.closed) {
+      pending.resolve(false);
+      return true;
+    }
     if (choice === "always-tool") {
       this.approvalStore.setAlwaysAllowedTool(pending.toolName);
       await this.approvalStore.save();
@@ -403,7 +441,9 @@ export class DesktopAgentService {
   }
 
   async #runTurn({ resume, instruction, files = [], displayInstruction = instruction }) {
+    this.#assertOpen();
     if (this.running) throw new Error("Agent sedang memproses tugas sebelumnya.");
+    this.cancelRequested = false;
     this.running = true;
     this.#emit("desktop.turn_started", { instruction: displayInstruction, workflowMode: this.workflowMode });
     try {
@@ -447,6 +487,8 @@ export class DesktopAgentService {
   }
 
   async send(instruction, workflowMode = "agent") {
+    const releaseLifecycle = this.lifecycleGuard.enter("send");
+    try {
     if (!this.session) throw new Error("Mulai agent terlebih dahulu.");
     if (this.running || this.autonomousDecisionInProgress) throw new Error("Agent sedang memproses tugas sebelumnya.");
     const text = String(instruction ?? "").trim();
@@ -478,8 +520,14 @@ export class DesktopAgentService {
       files,
     });
   }
+    } finally {
+      releaseLifecycle();
+    }
+  }
 
   async approveAutonomousPlan() {
+    const releaseLifecycle = this.lifecycleGuard.enter("approveAutonomousPlan");
+    try {
     if (!this.session) throw new Error("Tidak ada sesi agent aktif.");
     if (this.running || this.autonomousDecisionInProgress) throw new Error("Agent sedang memproses tugas.");
     this.autonomousDecisionInProgress = true;
@@ -520,8 +568,14 @@ export class DesktopAgentService {
       this.autonomousDecisionInProgress = false;
     }
   }
+    } finally {
+      releaseLifecycle();
+    }
+  }
 
   async acceptAutonomousVerification(summary) {
+    const releaseLifecycle = this.lifecycleGuard.enter("acceptAutonomousVerification");
+    try {
     if (!this.session) throw new Error("Tidak ada sesi agent aktif.");
     if (this.running || this.autonomousDecisionInProgress) {
       throw new Error("Tunggu agent berhenti sebelum menerima hasil verifikasi.");
@@ -545,8 +599,14 @@ export class DesktopAgentService {
     });
     return accepted;
   }
+    } finally {
+      releaseLifecycle();
+    }
+  }
 
   async rollbackWorkspaceCheckpoint() {
+    const releaseLifecycle = this.lifecycleGuard.enter("rollbackWorkspaceCheckpoint");
+    try {
     if(!this.session)throw Error("Tidak ada sesi agent aktif.");
     if(this.running||this.autonomousDecisionInProgress)throw Error("Tunggu agent selesai sebelum rollback.");
     const cp=this.session.state.workspaceCheckpoint;
@@ -556,8 +616,14 @@ export class DesktopAgentService {
     await this.session.appendEvent("autonomous.workspace_rolled_back",result);
     this.#emit("desktop.workspace_rolled_back",result);return result;
   }
+    } finally {
+      releaseLifecycle();
+    }
+  }
 
   async rejectAutonomousPlan() {
+    const releaseLifecycle = this.lifecycleGuard.enter("rejectAutonomousPlan");
+    try {
     if (!this.session) throw new Error("Tidak ada sesi agent aktif.");
     if (this.running || this.autonomousDecisionInProgress) throw new Error("Agent sedang memproses tugas.");
     this.autonomousDecisionInProgress = true;
@@ -576,26 +642,35 @@ export class DesktopAgentService {
       this.autonomousDecisionInProgress = false;
     }
   }
-
+    } finally {
+      releaseLifecycle();
+    }
+  }
 
   cancel() {
     if (!this.adapter || !this.running) return false;
+    this.cancelRequested = true;
     this.adapter.escCancelRequested = true;
+    this.#denyPendingApprovals();
     this.#emit("desktop.cancel_requested");
     return true;
   }
 
   async close() {
-    if (this.closed) return;
+    if (this.closed) {
+      await this.lifecycleGuard.waitForIdle();
+      return;
+    }
     this.closed = true;
+    this.cancelRequested = true;
+    if (this.adapter) this.adapter.escCancelRequested = true;
+    this.#denyPendingApprovals();
     this.continueProviderSelection();
+    await this.lifecycleGuard.waitForIdle();
     if (this.session && ["initializing", "running", "waiting_model", "auth_required"].includes(this.session.state.phase)) {
       await this.session.update({ phase: "interrupted", lastError: this.session.state.lastError || "Desktop app closed." }).catch(() => {});
     }
-    for (const [requestId, pending] of this.pendingApprovals) {
-      pending.resolve(false);
-      this.pendingApprovals.delete(requestId);
-    }
+    this.#denyPendingApprovals();
     await this.processManager?.stopAll().catch(() => {});
     await this.adapter?.close().catch(() => {});
   }

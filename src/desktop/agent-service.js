@@ -414,11 +414,19 @@ export class DesktopAgentService {
         mode: null,
       });
       if (this.workflowMode === "autonomous" && this.workspaceCheckpoint) {
-        const finalized = await WorkspaceCheckpoint.finalize({ directory: this.workspaceCheckpoint.directory });
-        await this.session.update({ workspaceCheckpoint: { id: finalized.id, directory: this.workspaceCheckpoint.directory, status: "completed", createdAt: finalized.createdAt, completedAt: finalized.completedAt, changedFiles: finalized.changed.length } });
-        await this.session.appendEvent("autonomous.workspace_checkpointed", { checkpointId: finalized.id, changedFiles: finalized.changed.length });
-        this.#emit("desktop.workspace_checkpointed", { checkpointId: finalized.id, changedFiles: finalized.changed.length });
-        this.workspaceCheckpoint = null;
+        const checkpoint = this.workspaceCheckpoint;
+        try {
+          const finalized = await WorkspaceCheckpoint.finalize({ directory: checkpoint.directory });
+          await this.session.update({ workspaceCheckpoint: { id: finalized.id, directory: checkpoint.directory, status: "completed", createdAt: finalized.createdAt, completedAt: finalized.completedAt, changedFiles: finalized.changed.length } });
+          await this.session.appendEvent("autonomous.workspace_checkpointed", { checkpointId: finalized.id, changedFiles: finalized.changed.length });
+          this.#emit("desktop.workspace_checkpointed", { checkpointId: finalized.id, changedFiles: finalized.changed.length });
+        } catch (error) {
+          await this.session.update({ workspaceCheckpoint: { id: checkpoint.id, directory: checkpoint.directory, status: "unavailable", error: error.message } });
+          await this.session.appendEvent("autonomous.workspace_checkpoint_failed", { checkpointId: checkpoint.id, message: error.message });
+          this.#emit("desktop.workspace_checkpoint_failed", { message: error.message });
+        } finally {
+          this.workspaceCheckpoint = null;
+        }
       }
       this.#emit("desktop.turn_finished", {
         sessionId: this.session.sessionId,

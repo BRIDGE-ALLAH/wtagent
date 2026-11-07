@@ -889,6 +889,9 @@ api.onAgentEvent((event) => {
     case "desktop.workspace_rolled_back":
       appendActivity("Rollback workspace selesai",payload.restoredFiles+" file dipulihkan.");
       break;
+    case "desktop.workspace_checkpoint_failed":
+      appendMessage("system", "Implementasi selesai, tetapi checkpoint rollback tidak dapat difinalisasi: " + payload.message, "error");
+      break;
     case "desktop.turn_started":
       setAgentStatus("Memproses tugas…", "busy");
       appendActivity("Agent mulai bekerja", payload.instruction || "");
